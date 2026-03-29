@@ -35,7 +35,20 @@ jobs:
             /p:Platform=AnyCPU `
             /verbosity:minimal
 
-      # 6. Publish the VSTO add-in (creates the publish/ folder the MSI needs)
+      # 6. Generate a throwaway self-signed cert for ClickOnce manifest signing
+      - name: Generate self-signed certificate
+        run: |
+          $cert = New-SelfSignedCertificate `
+            -Subject "CN=WorshipHelper" `
+            -CertStoreLocation "Cert:\CurrentUser\My" `
+            -KeyExportPolicy Exportable `
+            -KeySpec Signature `
+            -NotAfter (Get-Date).AddYears(5)
+          $pwd = ConvertTo-SecureString -String "build123" -Force -AsPlainText
+          Export-PfxCertificate -Cert $cert -FilePath WorshipHelperVSTO\ci-cert.pfx -Password $pwd
+          echo "CERT_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+
+      # 7. Publish the VSTO add-in (creates the publish/ folder the MSI needs)
       - name: Publish VSTO
         run: |
           msbuild WorshipHelperVSTO\WorshipHelperVSTO.csproj `
@@ -43,8 +56,10 @@ jobs:
             /p:Configuration=Release `
             /p:Platform=AnyCPU `
             /p:PublishDir=publish\ `
-            /p:SignManifests=false `
-            /p:SignAssembly=false `
+            /p:SignManifests=true `
+            /p:ManifestCertificateThumbprint=$env:CERT_THUMBPRINT `
+            /p:ManifestKeyFile=ci-cert.pfx `
+            /p:ManifestCertificatePassword=build123 `
             /verbosity:minimal
 
       # 7. Build the MSI via the WiX setup project
