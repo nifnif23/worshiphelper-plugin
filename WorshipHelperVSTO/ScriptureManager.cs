@@ -1,4 +1,4 @@
-﻿using log4net;
+using log4net;
 using Microsoft.Office.Interop.PowerPoint;
 using System;
 using System.Linq;
@@ -14,126 +14,106 @@ namespace WorshipHelperVSTO
         public void addScripture(ScriptureTemplate template, Bible bible, string bookName, int chapterNum, int verseNumStart, int verseNumEnd)
         {
             log.Debug($"Inserting scripture from {bookName} {chapterNum}:{verseNumStart}-{verseNumEnd} ({bible.name}) using template {template.name}");
-            var verseCount = verseNumEnd - verseNumStart + 1;
 
             Application app = Globals.ThisAddIn.Application;
-            
-            // Copy the template from the template presentation, and close it
-            Presentation templatePresentation = app.Presentations.Open(template.path, msoTrue, msoFalse, msoFalse);
-            var currentSlide = newSlideFromTemplate(templatePresentation);
 
-            // We can't use PasteSourceFormatting very easily here, because it is asynchonous. If we do it in a separate thread and then wait, it works but is much slower.
-            // Instead we can explicitly copy the text colour to ensure it doesn't get overridden by the previous slide.
+            // Open the template presentation once; we copy from it for every verse
+            Presentation templatePresentation = app.Presentations.Open(template.path, msoTrue, msoFalse, msoFalse);
             var templateSlide = templatePresentation.Slides[1];
+
+            // Capture template colours so they survive the paste operation
             var color1 = templateSlide.Shapes[2].TextFrame.TextRange.Font.Color.RGB;
             var color2 = templateSlide.Shapes[3].TextFrame.TextRange.Font.Color.RGB;
-            currentSlide.Shapes[2].TextFrame.TextRange.Font.Color.RGB = color1;
-            currentSlide.Shapes[3].TextFrame.TextRange.Font.Color.RGB = color2;
+            var originalFontSize = templateSlide.Shapes[2].TextFrame.TextRange.Font.Size;
+
+            var translation = bible.name;
+            var chapter = bible.books
+                               .Where(item => item.name == bookName).First()
+                               .chapters.Where(item => item.number == chapterNum).First();
+
+            var verseList = chapter.verses
+                                   .Where(verse => verse.number >= verseNumStart && verse.number <= verseNumEnd)
+                                   .OrderBy(verse => verse.number)
+                                   .ToList();
+
+            int startSlideIndex = -1;
+            int lastSlideIndex  = -1;
+
+            // ── One slide per verse ──────────────────────────────────────────────
+            foreach (var verse in verseList)
+            {
+                log.Debug($"Adding slide for verse {verse.number}");
+
+                // Individual verse reference label (e.g. "John 3:16 (ESV)")
+                var reference = $"{bookName} {chapterNum}:{verse.number} ({translation})";
+
+                // Paste a fresh copy of the template slide at the current insert position
+                var currentSlide = newSlideFromTemplate(templatePresentation);
+
+                if (startSlideIndex == -1) startSlideIndex = currentSlide.SlideIndex;
+                lastSlideIndex = currentSlide.SlideIndex;
+
+                // Restore template colours (may be overridden by destination theme)
+                currentSlide.Shapes[2].TextFrame.TextRange.Font.Color.RGB = color1;
+                currentSlide.Shapes[3].TextFrame.TextRange.Font.Color.RGB = color2;
+
+                var objBodyTextBox = currentSlide.Shapes[2];
+                var objDescTextBox = currentSlide.Shapes[3];
+
+                // Reset font size in case a previous verse shrank it
+                objBodyTextBox.TextFrame.TextRange.Font.Size = originalFontSize;
+                objDescTextBox.TextFrame.TextRange.Text = reference;
+
+                // Write verse text; wrap verse number in $ markers for superscripting below
+                string verseText = "$" + verse.number + "$ " + verse.text;
+                objBodyTextBox.TextFrame.TextRange.Text = verseText;
+
+                // If even a single verse is too long, shrink the font to fit
+                while (objBodyTextBox.Height > maxHeight && objBodyTextBox.TextFrame.TextRange.Font.Size > 8)
+                {
+                    objBodyTextBox.TextFrame.TextRange.Font.Size -= 1;
+                }
+
+                // Superscript the verse number and strip the $ delimiters
+                string toFind    = "$" + verse.number + "$";
+                int    markerIdx = objBodyTextBox.TextFrame.TextRange.Text.IndexOf(toFind);
+                if (markerIdx > -1)
+                {
+                    // Superscript the entire "$N$" token first
+                    objBodyTextBox.TextFrame.TextRange.Characters(markerIdx + 1, toFind.Length).Font.Superscript = msoTrue;
+                    // Delete leading $  (indices shift by -1 after this)
+                    objBodyTextBox.TextFrame.TextRange.Characters(markerIdx + 1, 1).Delete();
+                    // Delete trailing $ (now sits at markerIdx + toFind.Length - 1)
+                    objBodyTextBox.TextFrame.TextRange.Characters(markerIdx + toFind.Length - 1, 1).Delete();
+                }
+
+                // Select this slide so the next newSlideFromTemplate inserts after it
+                app.ActivePresentation.Slides.Range(new int[] { lastSlideIndex }).Select();
+            }
 
             templatePresentation.Close();
 
-            var objBodyTextBox = currentSlide.Shapes[2];
-            var objDescTextBox = currentSlide.Shapes[3];
-            var originalFontSize = objBodyTextBox.TextFrame.TextRange.Font.Size;
+            // Re-select all newly added slides so a future addition goes after them
+            if (startSlideIndex != -1)
+            {
+                int numSlides   = lastSlideIndex - startSlideIndex + 1;
+                int[] slideIdxs = new int[numSlides];
+                for (int i = 0; i < numSlides; i++)
+                    slideIdxs[i] = i + startSlideIndex;
 
-            var translation = bible.name;
-            var chapter = bible.books.Where(item => item.name == bookName).First().chapters.Where(item => item.number == chapterNum).First();
-            var verseList = chapter.verses.Where(verse => verse.number >= verseNumStart && verse.number <= verseNumEnd).OrderBy(verse => verse.number).ToList();
-            string verseReference;
-            if (verseNumStart == 1 && verseNumEnd == chapter.verses.Count)
-            {
-                verseReference = "";
-            } else if (verseNumStart == verseNumEnd)
-            {
-                verseReference = $":{verseNumStart}";
-            } else
-            {
-                verseReference = $":{verseNumStart}-{verseNumEnd}";
+                log.Debug($"Selecting slides {startSlideIndex} to {lastSlideIndex}");
+                app.ActivePresentation.Slides.Range(slideIdxs).Select();
             }
-            var reference = $"{bookName} {chapterNum}{verseReference} ({translation})";
-
-            objBodyTextBox.TextFrame.TextRange.Text = "";
-            objDescTextBox.TextFrame.TextRange.Text = reference;
-
-            var startSlideIndex = currentSlide.SlideIndex;
-            var numSlidesAdded = 0;
-            for (int i = 0; i < verseCount; i++)
-            {
-                log.Debug($"Adding verse {verseList[i].number}");
-                var originalText = objBodyTextBox.TextFrame.TextRange.Text;
-                var verseText = "$" + verseList[i].number + "$ " + verseList[i].text + " ";
-                objBodyTextBox.TextFrame.TextRange.Text = objBodyTextBox.TextFrame.TextRange.Text + verseText;
-                if (objBodyTextBox.Height > maxHeight)
-                {
-                    if (originalText == "")
-                    {
-                        // The verse is so long it cannot fit on the slide - make it smaller
-                        while(objBodyTextBox.Height > maxHeight)
-                        {
-                            objBodyTextBox.TextFrame.TextRange.Font.Size -= 1;
-                        }
-                    } else
-                    {
-                        log.Debug($"Adding new slide");
-
-                        // We have overshot the space available on our slide, so *undo* the extra text insertion
-                        objBodyTextBox.TextFrame.TextRange.Text = originalText;
-
-                        // ... and move to a new slide
-                        currentSlide = currentSlide.Duplicate()[1];
-                        numSlidesAdded++;
-                        objBodyTextBox = currentSlide.Shapes[2];
-                        objDescTextBox = currentSlide.Shapes[3];
-
-                        objBodyTextBox.TextFrame.TextRange.Font.Size = originalFontSize;
-                        objBodyTextBox.TextFrame.TextRange.Text = "";
-                        objDescTextBox.TextFrame.TextRange.Text = reference;
-                        i--;
-                    }
-                }
-            }
-            var endSlideIndex = startSlideIndex + numSlidesAdded;
-
-            // Find the verse numbers (prefixed with a $) and superscript them, and remove the $
-            for (int slideIndex = startSlideIndex; slideIndex <= endSlideIndex; slideIndex++)
-            {
-                currentSlide = app.ActivePresentation.Slides[slideIndex];
-                objBodyTextBox = currentSlide.Shapes[2];
-                foreach (Verse verse in verseList)
-                {
-                    string toFind = "$" + verse.number + "$";
-                    int verseIndex = objBodyTextBox.TextFrame.TextRange.Text.IndexOf(toFind);
-                    if (verseIndex > -1)
-                    {
-                        objBodyTextBox.TextFrame.TextRange.Characters(verseIndex + 1, toFind.Length).Font.Superscript = msoTrue;
-                        objBodyTextBox.TextFrame.TextRange.Characters(verseIndex + 1, 1).Delete();
-                        objBodyTextBox.TextFrame.TextRange.Characters(verseIndex + toFind.Length - 1, 1).Delete();
-                    }
-                }
-            }
-
-            // Select the new slides, which will ensure that a future addition will go after it
-            int[] slideIndexes = new int[numSlidesAdded + 1];
-            for(int i=0; i<numSlidesAdded + 1; i++)
-            {
-                slideIndexes[i] = i + startSlideIndex;
-            }
-            log.Debug($"Selecting slides from {startSlideIndex} to {endSlideIndex}");
-            var range = app.ActivePresentation.Slides.Range(slideIndexes);
-            range.Select();
-        } 
+        }
 
         private Slide newSlideFromTemplate(Presentation templatePresentation)
         {
             Application app = Globals.ThisAddIn.Application;
-            var window = getMainWindow();
 
             var insertAt = new SelectionManager().GetNextSlideIndex();
-            log.Debug($"Pasting at slide {insertAt}");
-            //window.View.GotoSlide(insertAt);
+            log.Debug($"Pasting template slide at position {insertAt}");
             templatePresentation.Slides[1].Copy();
             return app.ActivePresentation.Slides.Paste(insertAt)[1];
-
         }
 
         public static DocumentWindow getMainWindow()
@@ -141,11 +121,8 @@ namespace WorshipHelperVSTO
             Application app = Globals.ThisAddIn.Application;
             foreach (DocumentWindow win in app.ActivePresentation.Windows)
             {
-                // There is probably a better way...
                 if (!win.Caption.Contains("Presenter View"))
-                {
                     return win;
-                }
             }
             return null;
         }

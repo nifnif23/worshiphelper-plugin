@@ -134,9 +134,17 @@ namespace WorshipHelperVSTO
             }
 
             log.Debug("Inserting");
-            new ScriptureManager().addScripture(cmbTemplate.SelectedItem as ScriptureTemplate, bible, book.name, chapterNum, verseNumStart, verseNumEnd);
-            log.Debug("Closing");
-            this.Close();
+            try
+            {
+                new ScriptureManager().addScripture(cmbTemplate.SelectedItem as ScriptureTemplate, bible, book.name, chapterNum, verseNumStart, verseNumEnd);
+                log.Debug("Insert complete");
+            }
+            finally
+            {
+                // Always close the window after attempting to insert, even if an error occurs
+                log.Debug("Closing scripture window");
+                this.Close();
+            }
         }
 
         private void txtReference_TextChanged(object sender, EventArgs e)
