@@ -34,9 +34,30 @@ jobs:
             /p:Platform=AnyCPU `
             /verbosity:minimal
 
-      # Publish without signing - MSI is the deliverable, not ClickOnce.
-      # SignManifests=false avoids the stale thumbprint baked into the .csproj.
-      # BootstrapperEnabled=false skips setup.exe generation entirely.
+      # -Type CodeSigningCert adds the Code Signing EKU that SignTool requires.
+      # Without it, SignTool rejects the cert even if the thumbprint matches.
+      # Import into both CurrentUser and LocalMachine so all MSBuild sub-processes can find it.
+      - name: Generate self-signed certificate
+        run: |
+          $cert = New-SelfSignedCertificate `
+            -Subject "CN=WorshipHelper" `
+            -CertStoreLocation "Cert:\CurrentUser\My" `
+            -KeyExportPolicy Exportable `
+            -KeySpec Signature `
+            -KeyUsage DigitalSignature `
+            -Type CodeSigningCert `
+            -NotAfter (Get-Date).AddYears(5)
+          $pwd = ConvertTo-SecureString -String "build123" -Force -AsPlainText
+          $pfxPath = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\ci-cert.pfx"
+          Export-PfxCertificate -Cert $cert -FilePath $pfxPath -Password $pwd | Out-Null
+          $store = New-Object System.Security.Cryptography.X509Certificates.X509Store("My", "LocalMachine")
+          $store.Open("ReadWrite")
+          $store.Add($cert)
+          $store.Close()
+          echo "CERT_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+          echo "PFX_PATH=$pfxPath" >> $env:GITHUB_ENV
+          echo "Certificate generated: $($cert.Thumbprint)"
+
       - name: Publish VSTO
         run: |
           msbuild WorshipHelperVSTO\WorshipHelperVSTO.csproj `
@@ -44,8 +65,10 @@ jobs:
             /p:Configuration=Release `
             /p:Platform=AnyCPU `
             /p:PublishDir="${env:GITHUB_WORKSPACE}\WorshipHelperVSTO\publish\" `
-            /p:SignManifests=false `
-            /p:BootstrapperEnabled=false `
+            /p:SignManifests=true `
+            /p:ManifestCertificateThumbprint="$env:CERT_THUMBPRINT" `
+            /p:ManifestKeyFile="$env:PFX_PATH" `
+            /p:ManifestCertificatePassword=build123 `
             /verbosity:normal
 
       # Show what got published so we can debug if MSI step fails
