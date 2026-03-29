@@ -43,6 +43,8 @@ jobs:
             /p:Configuration=Release `
             /p:Platform=AnyCPU `
             /p:PublishDir=publish\ `
+            /p:SignManifests=false `
+            /p:SignAssembly=false `
             /verbosity:minimal
 
       # 7. Build the MSI via the WiX setup project
