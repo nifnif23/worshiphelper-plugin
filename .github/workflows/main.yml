@@ -1,33 +1,32 @@
 name: Build WorshipHelper MSI
 
 on:
-  workflow_dispatch: # Lets you trigger it manually from the Actions tab
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true  # Silences the Node.js deprecation warning
 
 jobs:
   build:
-    runs-on: windows-2022 # Has Visual Studio 2022 + Office tools pre-installed
+    runs-on: windows-2022
 
     steps:
-      # 1. Check out your repo
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 2. Add MSBuild to PATH
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      # 3. Install WiX Toolset v3 (needed to build the .msi)
+      # Find whichever WiX version is already on the runner
       - name: Set WiX environment variable
         run: |
           $wixPath = (Get-ChildItem "C:\Program Files (x86)" -Filter "WiX Toolset*" | Select-Object -First 1).FullName
           echo "WIX=$wixPath" >> $env:GITHUB_ENV
           echo "Found WiX at: $wixPath"
 
-      # 4. Restore NuGet packages
       - name: Restore NuGet packages
         run: nuget restore WorshipHelper.sln
 
-      # 5. Build the VSTO add-in in Release mode
       - name: Build VSTO (Release)
         run: |
           msbuild WorshipHelperVSTO\WorshipHelperVSTO.csproj `
@@ -35,7 +34,7 @@ jobs:
             /p:Platform=AnyCPU `
             /verbosity:minimal
 
-      # 6. Generate a throwaway self-signed cert for ClickOnce manifest signing
+      # Generate a throwaway self-signed cert and import it into the cert store
       - name: Generate self-signed certificate
         run: |
           $cert = New-SelfSignedCertificate `
@@ -45,33 +44,40 @@ jobs:
             -KeySpec Signature `
             -NotAfter (Get-Date).AddYears(5)
           $pwd = ConvertTo-SecureString -String "build123" -Force -AsPlainText
-          Export-PfxCertificate -Cert $cert -FilePath WorshipHelperVSTO\ci-cert.pfx -Password $pwd
+          $pfxPath = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\ci-cert.pfx"
+          Export-PfxCertificate -Cert $cert -FilePath $pfxPath -Password $pwd | Out-Null
           echo "CERT_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+          echo "PFX_PATH=$pfxPath" >> $env:GITHUB_ENV
+          echo "Certificate generated: $($cert.Thumbprint)"
 
-      # 7. Publish the VSTO add-in (creates the publish/ folder the MSI needs)
       - name: Publish VSTO
         run: |
           msbuild WorshipHelperVSTO\WorshipHelperVSTO.csproj `
             /target:Publish `
             /p:Configuration=Release `
             /p:Platform=AnyCPU `
-            /p:PublishDir=publish\ `
+            /p:PublishDir="${env:GITHUB_WORKSPACE}\WorshipHelperVSTO\publish\" `
             /p:SignManifests=true `
-            /p:ManifestCertificateThumbprint=$env:CERT_THUMBPRINT `
-            /p:ManifestKeyFile=ci-cert.pfx `
+            /p:ManifestCertificateThumbprint="$env:CERT_THUMBPRINT" `
+            /p:ManifestKeyFile="$env:PFX_PATH" `
             /p:ManifestCertificatePassword=build123 `
-            /verbosity:minimal
+            /verbosity:normal
 
-      # 7. Build the MSI via the WiX setup project
+      # Show what got published so we can debug if MSI step fails
+      - name: List publish output
+        run: |
+          echo "=== Publish folder contents ==="
+          Get-ChildItem -Recurse WorshipHelperVSTO\publish\ | Select-Object FullName
+        continue-on-error: true
+
       - name: Build MSI
         run: |
           msbuild WorshipHelperSetup\WorshipHelperSetup.wixproj `
             /p:Configuration=Release `
             /p:Platform=x86 `
-            /p:AddInFiles=..\WorshipHelperVSTO\publish\ `
-            /verbosity:minimal
+            /p:AddInFiles="${env:GITHUB_WORKSPACE}\WorshipHelperVSTO\publish\" `
+            /verbosity:normal
 
-      # 8. Upload the .msi as a downloadable artifact
       - name: Upload MSI artifact
         uses: actions/upload-artifact@v4
         with:
