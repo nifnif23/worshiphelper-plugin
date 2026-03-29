@@ -17,10 +17,11 @@ jobs:
         uses: microsoft/setup-msbuild@v2
 
       # 3. Install WiX Toolset v3 (needed to build the .msi)
-      - name: Install WiX Toolset v3
+      - name: Set WiX environment variable
         run: |
-          choco install wixtoolset --version 3.14.0 -y
-          echo "WIX=C:\Program Files (x86)\WiX Toolset v3.14" >> $env:GITHUB_ENV
+          $wixPath = (Get-ChildItem "C:\Program Files (x86)" -Filter "WiX Toolset*" | Select-Object -First 1).FullName
+          echo "WIX=$wixPath" >> $env:GITHUB_ENV
+          echo "Found WiX at: $wixPath"
 
       # 4. Restore NuGet packages
       - name: Restore NuGet packages
