@@ -34,7 +34,7 @@ jobs:
             /p:Platform=AnyCPU `
             /verbosity:minimal
 
-      # Generate a throwaway self-signed cert and import it into both cert stores
+      # Generate a throwaway self-signed cert and import it into the cert store
       - name: Generate self-signed certificate
         run: |
           $cert = New-SelfSignedCertificate `
@@ -46,13 +46,6 @@ jobs:
           $pwd = ConvertTo-SecureString -String "build123" -Force -AsPlainText
           $pfxPath = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\ci-cert.pfx"
           Export-PfxCertificate -Cert $cert -FilePath $pfxPath -Password $pwd | Out-Null
-
-          # Also import into LocalMachine\My so SignTool can find it when signing setup.exe
-          $store = New-Object System.Security.Cryptography.X509Certificates.X509Store("My", "LocalMachine")
-          $store.Open("ReadWrite")
-          $store.Add($cert)
-          $store.Close()
-
           echo "CERT_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
           echo "PFX_PATH=$pfxPath" >> $env:GITHUB_ENV
           echo "Certificate generated: $($cert.Thumbprint)"
@@ -68,6 +61,7 @@ jobs:
             /p:ManifestCertificateThumbprint="$env:CERT_THUMBPRINT" `
             /p:ManifestKeyFile="$env:PFX_PATH" `
             /p:ManifestCertificatePassword=build123 `
+            /p:GenerateBootstrapper=false `
             /verbosity:normal
 
       # Show what got published so we can debug if MSI step fails
