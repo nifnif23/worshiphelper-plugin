@@ -34,22 +34,9 @@ jobs:
             /p:Platform=AnyCPU `
             /verbosity:minimal
 
-      # Generate a throwaway self-signed cert and import it into the cert store
-      - name: Generate self-signed certificate
-        run: |
-          $cert = New-SelfSignedCertificate `
-            -Subject "CN=WorshipHelper" `
-            -CertStoreLocation "Cert:\CurrentUser\My" `
-            -KeyExportPolicy Exportable `
-            -KeySpec Signature `
-            -NotAfter (Get-Date).AddYears(5)
-          $pwd = ConvertTo-SecureString -String "build123" -Force -AsPlainText
-          $pfxPath = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\ci-cert.pfx"
-          Export-PfxCertificate -Cert $cert -FilePath $pfxPath -Password $pwd | Out-Null
-          echo "CERT_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
-          echo "PFX_PATH=$pfxPath" >> $env:GITHUB_ENV
-          echo "Certificate generated: $($cert.Thumbprint)"
-
+      # Publish without signing - MSI is the deliverable, not ClickOnce.
+      # SignManifests=false avoids the stale thumbprint baked into the .csproj.
+      # BootstrapperEnabled=false skips setup.exe generation entirely.
       - name: Publish VSTO
         run: |
           msbuild WorshipHelperVSTO\WorshipHelperVSTO.csproj `
@@ -57,11 +44,8 @@ jobs:
             /p:Configuration=Release `
             /p:Platform=AnyCPU `
             /p:PublishDir="${env:GITHUB_WORKSPACE}\WorshipHelperVSTO\publish\" `
-            /p:SignManifests=true `
-            /p:ManifestCertificateThumbprint="$env:CERT_THUMBPRINT" `
-            /p:ManifestKeyFile="$env:PFX_PATH" `
-            /p:ManifestCertificatePassword=build123 `
-            /p:GenerateBootstrapper=false `
+            /p:SignManifests=false `
+            /p:BootstrapperEnabled=false `
             /verbosity:normal
 
       # Show what got published so we can debug if MSI step fails
