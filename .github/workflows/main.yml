@@ -75,11 +75,14 @@ jobs:
         run: |
           echo "=== Publish folder contents ==="
           Get-ChildItem -Recurse WorshipHelperVSTO\publish\ | Select-Object FullName
+          echo "=== bin\Release contents ==="
+          Get-ChildItem -Recurse WorshipHelperVSTO\bin\Release\ | Select-Object FullName
         continue-on-error: true
 
       # WiX resolves $(var.WorshipHelperVSTO.TargetDir) from the ProjectReference automatically.
-      # Since we need to remove that reference to avoid an x86 platform mismatch, we strip it
-      # and supply the equivalent path via DefineConstants instead.
+      # We strip the reference to avoid an x86 platform mismatch, then supply the path manually.
+      # TargetDir must point to bin\Release\ (the plain build output), NOT the publish folder —
+      # Product.wxs expects undecorated DLLs, not the .deploy files ClickOnce publish produces.
       - name: Remove VSTO project reference from WiX project
         run: |
           $wixproj = "WorshipHelperSetup\WorshipHelperSetup.wixproj"
@@ -93,11 +96,11 @@ jobs:
 
       - name: Build MSI
         run: |
-          $publishDir = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\publish\"
+          $targetDir = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\bin\Release\"
           msbuild WorshipHelperSetup\WorshipHelperSetup.wixproj `
             /p:Configuration=Release `
             /p:Platform=x86 `
-            /p:DefineConstants="WorshipHelperVSTO.TargetDir=$publishDir" `
+            /p:DefineConstants="WorshipHelperVSTO.TargetDir=$targetDir" `
             /verbosity:normal
 
       - name: Upload MSI artifact
