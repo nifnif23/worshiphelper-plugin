@@ -77,9 +77,9 @@ jobs:
           Get-ChildItem -Recurse WorshipHelperVSTO\publish\ | Select-Object FullName
         continue-on-error: true
 
-      # WiX ignores BuildProjectReferences=false and rebuilds ProjectReferences through its own
-      # targets. Strip the ProjectReference node from the .wixproj at runtime so WiX uses the
-      # already-published files instead of trying to rebuild with Platform=x86 (which doesn't exist).
+      # WiX resolves $(var.WorshipHelperVSTO.TargetDir) from the ProjectReference automatically.
+      # Since we need to remove that reference to avoid an x86 platform mismatch, we strip it
+      # and supply the equivalent path via DefineConstants instead.
       - name: Remove VSTO project reference from WiX project
         run: |
           $wixproj = "WorshipHelperSetup\WorshipHelperSetup.wixproj"
@@ -93,10 +93,11 @@ jobs:
 
       - name: Build MSI
         run: |
+          $publishDir = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\publish\"
           msbuild WorshipHelperSetup\WorshipHelperSetup.wixproj `
             /p:Configuration=Release `
             /p:Platform=x86 `
-            /p:AddInFiles="${env:GITHUB_WORKSPACE}\WorshipHelperVSTO\publish\" `
+            /p:DefineConstants="WorshipHelperVSTO.TargetDir=$publishDir" `
             /verbosity:normal
 
       - name: Upload MSI artifact
