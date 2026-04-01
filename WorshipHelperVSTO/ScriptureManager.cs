@@ -1,7 +1,7 @@
 using log4net;
 using Microsoft.Office.Interop.PowerPoint;
 using System;
-using System.Collections.Generic; // Added for list manipulation
+using System.Collections.Generic;
 using System.Linq;
 using static Microsoft.Office.Core.MsoTriState;
 
@@ -30,27 +30,23 @@ namespace WorshipHelperVSTO
                                .Where(item => item.name == bookName).First()
                                .chapters.Where(item => item.number == chapterNum).First();
 
-            // --- CHANGE: Reverse the order here ---
-            // We order descending so that the last verse is processed first.
-            // This way, when PowerPoint pastes at the selection, the final result is 1, 2, 3...
+            // Order descending so that repeated inserts at the same index produce correct final order (1, 2, 3...)
             var verseList = chapter.verses
                                    .Where(verse => verse.number >= verseNumStart && verse.number <= verseNumEnd)
-                                   .OrderByDescending(verse => verse.number) 
+                                   .OrderByDescending(verse => verse.number)
                                    .ToList();
 
-            int startSlideIndex = -1;
-            int lastSlideIndex  = -1;
+            // Calculate insertAt ONCE before the loop so that it stays fixed.
+            // Calling GetNextSlideIndex() inside the loop (or calling Select() mid-loop)
+            // causes the slideshow view to shift, breaking the fixed-index insertion trick.
+            int insertAt = new SelectionManager().GetNextSlideIndex();
 
             foreach (var verse in verseList)
             {
                 log.Debug($"Adding slide for verse {verse.number}");
 
                 var reference = $"{bookName} {chapterNum}:{verse.number} ({translation})";
-                var currentSlide = newSlideFromTemplate(templatePresentation);
-
-                // Track indices for the final selection highlight
-                if (startSlideIndex == -1) startSlideIndex = currentSlide.SlideIndex;
-                lastSlideIndex = currentSlide.SlideIndex;
+                var currentSlide = newSlideFromTemplate(templatePresentation, insertAt);
 
                 currentSlide.Shapes[2].TextFrame.TextRange.Font.Color.RGB = color1;
                 currentSlide.Shapes[3].TextFrame.TextRange.Font.Color.RGB = color2;
@@ -78,31 +74,25 @@ namespace WorshipHelperVSTO
                     objBodyTextBox.TextFrame.TextRange.Characters(markerIdx + toFind.Length - 1, 1).Delete();
                 }
 
-                // We don't necessarily need to select every time in a loop if the paste 
-                // location is handled by newSlideFromTemplate, but keeping your logic:
-                app.ActivePresentation.Slides.Range(new int[] { lastSlideIndex }).Select();
+                // Do NOT call Select() here — it shifts the slideshow view and breaks
+                // GetNextSlideIndex() for subsequent iterations.
             }
 
             templatePresentation.Close();
 
-            // Re-select all added slides (Small logic tweak: ensure order is handled correctly)
-            if (startSlideIndex != -1)
+            // Select all inserted slides. Since we inserted in descending order at a fixed
+            // index, the slides now occupy insertAt through insertAt + count - 1.
+            int slideCount = verseList.Count;
+            if (slideCount > 0)
             {
-                int min = Math.Min(startSlideIndex, lastSlideIndex);
-                int max = Math.Max(startSlideIndex, lastSlideIndex);
-                int numSlides = max - min + 1;
-                int[] slideIdxs = new int[numSlides];
-                for (int i = 0; i < numSlides; i++)
-                    slideIdxs[i] = i + min;
-
+                int[] slideIdxs = Enumerable.Range(insertAt, slideCount).ToArray();
                 app.ActivePresentation.Slides.Range(slideIdxs).Select();
             }
         }
 
-        private Slide newSlideFromTemplate(Presentation templatePresentation)
+        private Slide newSlideFromTemplate(Presentation templatePresentation, int insertAt)
         {
             Application app = Globals.ThisAddIn.Application;
-            var insertAt = new SelectionManager().GetNextSlideIndex();
             templatePresentation.Slides[1].Copy();
             return app.ActivePresentation.Slides.Paste(insertAt)[1];
         }
