@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true 
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true  # Silences the Node.js deprecation warning
 
 jobs:
   build:
@@ -17,32 +17,7 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      # --- NEW STEP: Auto-increment Version Numbers ---
-      - name: Increment Version Numbers
-        shell: powershell
-        run: |
-          # Define the new version (1.0.0.X where X is the GitHub Run Number)
-          $newVersion = "1.0.0.${{ github.run_number }}"
-          echo "Setting version to: $newVersion"
-
-          # 1. Update the VSTO project AssemblyInfo
-          $assemblyInfoPath = "WorshipHelperVSTO\Properties\AssemblyInfo.cs"
-          if (Test-Path $assemblyInfoPath) {
-              (Get-Content $assemblyInfoPath) -replace '\[assembly: AssemblyVersion\(.*\)\]', "[assembly: AssemblyVersion(""$newVersion"")]" `
-                                              -replace '\[assembly: AssemblyFileVersion\(.*\)\]', "[assembly: AssemblyFileVersion(""$newVersion"")]" | 
-              Set-Content $assemblyInfoPath
-          }
-
-          # 2. Update the WiX Product.wxs (Crucial for MSI to overwrite old installs)
-          # This replaces the Version attribute and generates a new random Product Id (Guid)
-          $wxsPath = "WorshipHelperSetup\Product.wxs"
-          if (Test-Path $wxsPath) {
-              $guid = [guid]::NewGuid().ToString().ToUpper()
-              (Get-Content $wxsPath) -replace 'Version="[^"]+"', "Version=""$newVersion""" `
-                                      -replace 'Id="\*"', "Id=""$guid""" |
-              Set-Content $wxsPath
-          }
-
+      # Find whichever WiX version is already on the runner
       - name: Set WiX environment variable
         run: |
           $wixPath = (Get-ChildItem "C:\Program Files (x86)" -Filter "WiX Toolset*" | Select-Object -First 1).FullName
@@ -59,6 +34,8 @@ jobs:
             /p:Platform=AnyCPU `
             /verbosity:minimal
 
+      # -Type CodeSigningCert adds the Code Signing EKU that SignTool requires.
+      # Import into both CurrentUser and LocalMachine so all MSBuild sub-processes can find it.
       - name: Generate self-signed certificate
         run: |
           $cert = New-SelfSignedCertificate `
@@ -78,6 +55,7 @@ jobs:
           $store.Close()
           echo "CERT_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
           echo "PFX_PATH=$pfxPath" >> $env:GITHUB_ENV
+          echo "Certificate generated: $($cert.Thumbprint)"
 
       - name: Publish VSTO
         run: |
@@ -92,12 +70,19 @@ jobs:
             /p:ManifestCertificatePassword=build123 `
             /verbosity:normal
 
+      # Show what got published so we can debug if MSI step fails
       - name: List publish output
         run: |
           echo "=== Publish folder contents ==="
           Get-ChildItem -Recurse WorshipHelperVSTO\publish\ | Select-Object FullName
+          echo "=== bin\Release contents ==="
+          Get-ChildItem -Recurse WorshipHelperVSTO\bin\Release\ | Select-Object FullName
         continue-on-error: true
 
+      # WiX resolves $(var.WorshipHelperVSTO.TargetDir) from the ProjectReference automatically.
+      # We strip the reference to avoid an x86 platform mismatch, then supply the path manually.
+      # TargetDir must point to bin\Release\ (the plain build output), NOT the publish folder —
+      # Product.wxs expects undecorated DLLs, not the .deploy files ClickOnce publish produces.
       - name: Remove VSTO project reference from WiX project
         run: |
           $wixproj = "WorshipHelperSetup\WorshipHelperSetup.wixproj"
@@ -107,6 +92,7 @@ jobs:
           $refs = $xml.SelectNodes("//ms:ProjectReference", $ns)
           foreach ($ref in $refs) { $ref.ParentNode.RemoveChild($ref) | Out-Null }
           $xml.Save((Resolve-Path $wixproj))
+          echo "ProjectReference nodes removed: $($refs.Count)"
 
       - name: Build MSI
         run: |
