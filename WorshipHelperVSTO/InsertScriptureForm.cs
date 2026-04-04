@@ -1,4 +1,4 @@
-﻿using log4net;
+using log4net;
 using Microsoft.Win32;
 using System;
 using System.Data;
@@ -22,6 +22,10 @@ namespace WorshipHelperVSTO
             var registryKey = Registry.CurrentUser.CreateSubKey(@"SOFTWARE\WorshipHelper");
             var lastTemplate = registryKey.GetValue("LastScriptureTemplate") as string;
             var lastBible = registryKey.GetValue("LastBibleTranslation") as string;
+            var multiVerseSetting = registryKey.GetValue("MultiVerseProjection");
+
+            // Restore multi-verse checkbox state (defaults to false / unchecked)
+            chkMultiVerse.Checked = multiVerseSetting != null && (int)multiVerseSetting == 1;
 
             // Get a list of available templates, populate list and set initial selection
             log.Debug("Loading scripture templates");
@@ -133,10 +137,17 @@ namespace WorshipHelperVSTO
                 verseNumEnd = chapter.verses.Last().number;
             }
 
-            log.Debug("Inserting");
+            log.Debug($"Inserting (multiVerse={chkMultiVerse.Checked})");
             try
             {
-                new ScriptureManager().addScripture(cmbTemplate.SelectedItem as ScriptureTemplate, bible, book.name, chapterNum, verseNumStart, verseNumEnd);
+                new ScriptureManager().addScripture(
+                    cmbTemplate.SelectedItem as ScriptureTemplate,
+                    bible,
+                    book.name,
+                    chapterNum,
+                    verseNumStart,
+                    verseNumEnd,
+                    chkMultiVerse.Checked);
                 log.Debug("Insert complete");
             }
             finally
@@ -176,6 +187,14 @@ namespace WorshipHelperVSTO
             log.Info($"Selected template: {template.name}");
             var registryKey = Registry.CurrentUser.CreateSubKey(@"SOFTWARE\WorshipHelper");
             registryKey.SetValue("LastScriptureTemplate", template.name);
+        }
+
+        private void chkMultiVerse_CheckedChanged(object sender, EventArgs e)
+        {
+            // Persist the checkbox state so it survives between sessions
+            var registryKey = Registry.CurrentUser.CreateSubKey(@"SOFTWARE\WorshipHelper");
+            registryKey.SetValue("MultiVerseProjection", chkMultiVerse.Checked ? 1 : 0, RegistryValueKind.DWord);
+            log.Debug($"MultiVerseProjection preference saved: {chkMultiVerse.Checked}");
         }
     }
 

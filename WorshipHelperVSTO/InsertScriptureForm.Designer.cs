@@ -1,16 +1,9 @@
-﻿namespace WorshipHelperVSTO
+namespace WorshipHelperVSTO
 {
     partial class InsertScriptureForm
     {
-        /// <summary>
-        /// Required designer variable.
-        /// </summary>
         private System.ComponentModel.IContainer components = null;
 
-        /// <summary>
-        /// Clean up any resources being used.
-        /// </summary>
-        /// <param name="disposing">true if managed resources should be disposed; otherwise, false.</param>
         protected override void Dispose(bool disposing)
         {
             if (disposing && (components != null))
@@ -22,10 +15,6 @@
 
         #region Windows Form Designer generated code
 
-        /// <summary>
-        /// Required method for Designer support - do not modify
-        /// the contents of this method with the code editor.
-        /// </summary>
         private void InitializeComponent()
         {
             this.txtBook = new System.Windows.Forms.TextBox();
@@ -38,75 +27,60 @@
             this.cmbTranslation = new System.Windows.Forms.ComboBox();
             this.label3 = new System.Windows.Forms.Label();
             this.cmbTemplate = new System.Windows.Forms.ComboBox();
+            this.chkMultiVerse = new System.Windows.Forms.CheckBox();
             this.SuspendLayout();
-            // 
             // txtBook
-            // 
             this.txtBook.Location = new System.Drawing.Point(89, 66);
             this.txtBook.Name = "txtBook";
             this.txtBook.Size = new System.Drawing.Size(198, 20);
             this.txtBook.TabIndex = 0;
             this.txtBook.TextChanged += new System.EventHandler(this.txtSearchBox_TextChanged);
             this.txtBook.KeyPress += new System.Windows.Forms.KeyPressEventHandler(this.txtSearchBox_KeyPress);
-            // 
             // lblSearchBox
-            // 
             this.lblSearchBox.AutoSize = true;
             this.lblSearchBox.Location = new System.Drawing.Point(48, 69);
             this.lblSearchBox.Name = "lblSearchBox";
             this.lblSearchBox.Size = new System.Drawing.Size(35, 13);
             this.lblSearchBox.TabIndex = 1;
             this.lblSearchBox.Text = "Book:";
-            // 
             // btnInsert
-            // 
-            this.btnInsert.Location = new System.Drawing.Point(89, 118);
+            this.btnInsert.Location = new System.Drawing.Point(89, 148);
             this.btnInsert.Name = "btnInsert";
             this.btnInsert.Size = new System.Drawing.Size(95, 22);
             this.btnInsert.TabIndex = 2;
             this.btnInsert.Text = "Insert";
             this.btnInsert.UseVisualStyleBackColor = true;
             this.btnInsert.Click += new System.EventHandler(this.btnInsert_Click);
-            // 
             // label1
-            // 
             this.label1.AutoSize = true;
             this.label1.Location = new System.Drawing.Point(23, 95);
             this.label1.Name = "label1";
             this.label1.Size = new System.Drawing.Size(60, 13);
             this.label1.TabIndex = 4;
             this.label1.Text = "Reference:";
-            // 
             // txtReference
-            // 
             this.txtReference.Location = new System.Drawing.Point(89, 92);
             this.txtReference.Name = "txtReference";
             this.txtReference.Size = new System.Drawing.Size(198, 20);
             this.txtReference.TabIndex = 3;
             this.txtReference.TextChanged += new System.EventHandler(this.txtReference_TextChanged);
-            // 
             // btnCancel
-            // 
             this.btnCancel.DialogResult = System.Windows.Forms.DialogResult.Cancel;
-            this.btnCancel.Location = new System.Drawing.Point(190, 117);
+            this.btnCancel.Location = new System.Drawing.Point(190, 147);
             this.btnCancel.Name = "btnCancel";
             this.btnCancel.Size = new System.Drawing.Size(97, 23);
             this.btnCancel.TabIndex = 5;
             this.btnCancel.Text = "Cancel";
             this.btnCancel.UseVisualStyleBackColor = true;
             this.btnCancel.Click += new System.EventHandler(this.btnCancel_Click);
-            // 
             // label2
-            // 
             this.label2.AutoSize = true;
             this.label2.Location = new System.Drawing.Point(21, 42);
             this.label2.Name = "label2";
             this.label2.Size = new System.Drawing.Size(62, 13);
             this.label2.TabIndex = 7;
             this.label2.Text = "Translation:";
-            // 
             // cmbTranslation
-            // 
             this.cmbTranslation.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
             this.cmbTranslation.FormattingEnabled = true;
             this.cmbTranslation.Location = new System.Drawing.Point(89, 39);
@@ -114,18 +88,14 @@
             this.cmbTranslation.Size = new System.Drawing.Size(198, 21);
             this.cmbTranslation.TabIndex = 8;
             this.cmbTranslation.SelectionChangeCommitted += new System.EventHandler(this.cmbTranslation_SelectionChangeCommitted);
-            // 
             // label3
-            // 
             this.label3.AutoSize = true;
             this.label3.Location = new System.Drawing.Point(29, 15);
             this.label3.Name = "label3";
             this.label3.Size = new System.Drawing.Size(54, 13);
             this.label3.TabIndex = 10;
             this.label3.Text = "Template:";
-            // 
             // cmbTemplate
-            // 
             this.cmbTemplate.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
             this.cmbTemplate.FormattingEnabled = true;
             this.cmbTemplate.Location = new System.Drawing.Point(89, 12);
@@ -133,14 +103,22 @@
             this.cmbTemplate.Size = new System.Drawing.Size(198, 21);
             this.cmbTemplate.TabIndex = 11;
             this.cmbTemplate.SelectionChangeCommitted += new System.EventHandler(this.cmbTemplate_SelectionChangeCommitted);
-            // 
+            // chkMultiVerse
+            this.chkMultiVerse.AutoSize = true;
+            this.chkMultiVerse.Location = new System.Drawing.Point(89, 120);
+            this.chkMultiVerse.Name = "chkMultiVerse";
+            this.chkMultiVerse.Size = new System.Drawing.Size(199, 17);
+            this.chkMultiVerse.TabIndex = 12;
+            this.chkMultiVerse.Text = "Pack multiple verses per slide";
+            this.chkMultiVerse.UseVisualStyleBackColor = true;
+            this.chkMultiVerse.CheckedChanged += new System.EventHandler(this.chkMultiVerse_CheckedChanged);
             // InsertScriptureForm
-            // 
             this.AcceptButton = this.btnInsert;
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.CancelButton = this.btnCancel;
-            this.ClientSize = new System.Drawing.Size(350, 154);
+            this.ClientSize = new System.Drawing.Size(350, 184);
+            this.Controls.Add(this.chkMultiVerse);
             this.Controls.Add(this.cmbTemplate);
             this.Controls.Add(this.label3);
             this.Controls.Add(this.cmbTranslation);
@@ -155,7 +133,6 @@
             this.Text = "Insert Scripture";
             this.ResumeLayout(false);
             this.PerformLayout();
-
         }
 
         #endregion
@@ -170,5 +147,6 @@
         private System.Windows.Forms.ComboBox cmbTranslation;
         private System.Windows.Forms.Label label3;
         private System.Windows.Forms.ComboBox cmbTemplate;
+        private System.Windows.Forms.CheckBox chkMultiVerse;
     }
 }
