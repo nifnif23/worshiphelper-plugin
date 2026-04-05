@@ -1,6 +1,7 @@
 using log4net;
 using Microsoft.Win32;
 using System;
+using System.Collections.Generic;
 using System.Data;
 using System.IO;
 using System.Linq;
@@ -41,7 +42,7 @@ namespace WorshipHelperVSTO
                     cmbTemplate.SelectedItem = template;
                 }
             }
-            if (cmbTemplate.SelectedItem == null)
+            if (cmbTemplate.SelectedItem == null && cmbTemplate.Items.Count > 0)
             {
                 cmbTemplate.SelectedIndex = 0;
             }
@@ -58,7 +59,7 @@ namespace WorshipHelperVSTO
                     cmbTranslation.SelectedItem = bibleName;
                 }
             }
-            if (cmbTranslation.SelectedItem == null)
+            if (cmbTranslation.SelectedItem == null && cmbTranslation.Items.Count > 0)
             {
                 cmbTranslation.SelectedIndex = 0;
             }
@@ -73,6 +74,8 @@ namespace WorshipHelperVSTO
             txtBook.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
             txtBook.AutoCompleteSource = AutoCompleteSource.CustomSource;
             txtBook.AutoCompleteCustomSource = source;
+
+            btnInsert.Enabled = false;
         }
 
         private void txtSearchBox_TextChanged(object sender, EventArgs e)
@@ -82,31 +85,30 @@ namespace WorshipHelperVSTO
 
         private void txtSearchBox_KeyPress(object sender, KeyPressEventArgs e)
         {
-            
         }
 
         private bool isValidReference()
         {
             log.Debug($"Checking reference validity (book: {txtBook.Text}, reference: {txtReference.Text})");
+
+            if (string.IsNullOrWhiteSpace(txtBook.Text) || bible == null)
+                return false;
+
             var bookNames = bible.books.Select(book => book.name.ToLower()).ToList();
-
             var validBook = bookNames.Contains(txtBook.Text.ToLower());
-            var validReference = Regex.Match(txtReference.Text, "^[0-9]+(:[0-9]+(-[0-9]+)?)?$").Success;
 
-            if (validBook && validReference)
+            if (!validBook)
+                return false;
+
+            try
             {
-                try
-                {
-                    log.Debug("Book and reference appear structurally valid; parsing...");
-                    ScriptureReference.parse(bible, txtBook.Text, txtReference.Text);
-                    return true;
-                } catch(Exception e)
-                {
-                    // This will happen if parsing fails due to a bad reference
-                    return false;
-                }
-            } else
+                // Use the same parser as insertion
+                ScriptureReferenceParser.Parse(txtReference.Text);
+                return true;
+            }
+            catch (Exception ex)
             {
+                log.Debug($"Reference parse failed: {ex.Message}");
                 return false;
             }
         }
@@ -114,45 +116,65 @@ namespace WorshipHelperVSTO
         private void btnInsert_Click(object sender, EventArgs e)
         {
             log.Info("About to insert scripture");
-            log.Debug("Finding book");
-            var book = bible.books.Find(bookItem => bookItem.name.ToLower() == txtBook.Text.ToLower());
-            var referenceParts = txtReference.Text.Split(new char[] { ':', '-' });
 
-            log.Debug("Finding chapter");
-            var chapterNum = Int32.Parse(referenceParts[0]);
-            var chapter = book.chapters.Find(chapterItem => chapterItem.number == chapterNum);
+            var book = bible.books
+                .First(b => b.name.Equals(txtBook.Text, StringComparison.OrdinalIgnoreCase));
 
-            log.Debug("Finding verses");
-            int verseNumStart;
-            int verseNumEnd;
-            if (referenceParts.Length > 2) {
-                verseNumStart = Int32.Parse(referenceParts[1]);
-                verseNumEnd = Int32.Parse(referenceParts[2]);
-            } else if(referenceParts.Length > 1) {
-                verseNumStart = Int32.Parse(referenceParts[1]);
-                verseNumEnd = verseNumStart;
-            } else {
-                // No verses were specified, so use the whole range
-                verseNumStart = 1;
-                verseNumEnd = chapter.verses.Last().number;
+            // Parse reference using the universal parser
+            var parsed = ScriptureReferenceParser.Parse(txtReference.Text);
+
+            log.Debug($"Parsed reference: chapter={parsed.Chapter}, ranges={string.Join(";", parsed.Ranges.Select(r => $"{r.Start}-{r.End}"))}");
+
+            var chapter = book.chapters
+                .First(c => c.number == parsed.Chapter);
+
+            // Ensure verses are sorted numerically
+            var verses = chapter.verses
+                .OrderBy(v => v.number)
+                .ToList();
+
+            int maxVerse = verses.Last().number;
+
+            // Expand all ranges into a flat list of verse numbers
+            var verseNumbers = new List<int>();
+
+            foreach (var range in parsed.Ranges)
+            {
+                int s = Math.Max(1, range.Start);
+                int e = range.End == int.MaxValue ? maxVerse : range.End;
+                e = Math.Min(maxVerse, e);
+
+                for (int v = s; v <= e; v++)
+                    verseNumbers.Add(v);
             }
 
-            log.Debug($"Inserting (multiVerse={chkMultiVerse.Checked})");
+            // Remove duplicates and sort
+            verseNumbers = verseNumbers.Distinct().OrderBy(v => v).ToList();
+
+            if (!verseNumbers.Any())
+            {
+                log.Warn("No valid verses resolved from reference.");
+                MessageBox.Show("No valid verses found for this reference.", "Invalid Reference", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            log.Debug($"Final verse list: {string.Join(",", verseNumbers)}");
+
             try
             {
                 new ScriptureManager().addScripture(
                     cmbTemplate.SelectedItem as ScriptureTemplate,
                     bible,
                     book.name,
-                    chapterNum,
-                    verseNumStart,
-                    verseNumEnd,
+                    parsed.Chapter,
+                    verseNumbers.First(),
+                    verseNumbers.Last(),
                     chkMultiVerse.Checked);
+
                 log.Debug("Insert complete");
             }
             finally
             {
-                // Always close the window after attempting to insert, even if an error occurs
                 log.Debug("Closing scripture window");
                 this.Close();
             }
@@ -191,7 +213,6 @@ namespace WorshipHelperVSTO
 
         private void chkMultiVerse_CheckedChanged(object sender, EventArgs e)
         {
-            // Persist the checkbox state so it survives between sessions
             var registryKey = Registry.CurrentUser.CreateSubKey(@"SOFTWARE\WorshipHelper");
             registryKey.SetValue("MultiVerseProjection", chkMultiVerse.Checked ? 1 : 0, RegistryValueKind.DWord);
             log.Debug($"MultiVerseProjection preference saved: {chkMultiVerse.Checked}");
@@ -209,9 +230,97 @@ namespace WorshipHelperVSTO
             this.name = path.Split(new char[] { '\\' }).Last().Replace(".pptx", "");
         }
 
-        override public string ToString()
+        public override string ToString()
         {
             return name;
+        }
+    }
+
+    public class ParsedReference
+    {
+        public int Chapter { get; set; }
+        public List<(int Start, int End)> Ranges { get; set; } = new();
+    }
+
+    public static class ScriptureReferenceParser
+    {
+        public static ParsedReference Parse(string input)
+        {
+            if (string.IsNullOrWhiteSpace(input))
+                throw new ArgumentException("Reference is empty.");
+
+            // Normalize input
+            input = input
+                .Replace("–", "-")   // en-dash
+                .Replace("—", "-")   // em-dash
+                .Replace(" ", "")    // remove all spaces
+                .Replace("v", ":")   // support "3v16"
+                .Replace("V", ":");
+
+            // Now formats like "3v16-18" become "3:16-18"
+
+            var result = new ParsedReference();
+
+            var parts = input.Split(':');
+
+            if (!int.TryParse(parts[0], out int chapter))
+                throw new FormatException("Invalid chapter in reference.");
+
+            result.Chapter = chapter;
+
+            // Whole chapter
+            if (parts.Length == 1)
+            {
+                result.Ranges.Add((1, int.MaxValue));
+                return result;
+            }
+
+            if (parts.Length > 2)
+                throw new FormatException("Too many ':' or 'v' separators in reference.");
+
+            var versePart = parts[1];
+
+            if (string.IsNullOrWhiteSpace(versePart))
+            {
+                // Treat as whole chapter
+                result.Ranges.Add((1, int.MaxValue));
+                return result;
+            }
+
+            var segments = versePart.Split(',');
+
+            foreach (var seg in segments)
+            {
+                if (string.IsNullOrWhiteSpace(seg))
+                    continue;
+
+                if (seg.Contains("-"))
+                {
+                    var r = seg.Split('-');
+                    if (r.Length != 2)
+                        throw new FormatException("Invalid verse range segment.");
+
+                    if (!int.TryParse(r[0], out int start) || !int.TryParse(r[1], out int end))
+                        throw new FormatException("Invalid verse numbers in range.");
+
+                    if (end < start)
+                        throw new FormatException("Verse range end is before start.");
+
+                    result.Ranges.Add((start, end));
+                }
+                else
+                {
+                    if (!int.TryParse(seg, out int v))
+                        throw new FormatException("Invalid verse number.");
+
+                    result.Ranges.Add((v, v));
+                }
+            }
+
+            if (!result.Ranges.Any())
+                throw new FormatException("No valid verse ranges found.");
+
+            return result;
         }
     }
 }
