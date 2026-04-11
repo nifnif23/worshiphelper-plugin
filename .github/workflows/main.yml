@@ -139,18 +139,23 @@ jobs:
           Copy-Item $env:NAUDIO_CORE_PATH $targetDir -Force
           Copy-Item $env:NAUDIO_WINMM_PATH $targetDir -Force
 
-          # libvosk.dll — native C library that Vosk.dll P/Invokes into.
-          # The Vosk packages.config NuGet package bundles it in lib\ alongside Vosk.dll.
+          # libvosk.dll and its MinGW runtime dependencies
+          # (libgcc_s_seh-1.dll, libstdc++-6.dll, libwinpthread-1.dll)
+          # all ship in the same lib\ folder as Vosk.dll in the NuGet package.
+          # Copy every .dll from that folder to cover all of them.
           $voskDir = Split-Path $env:VOSK_PATH -Parent
-          $libvosk = Join-Path $voskDir "libvosk.dll"
-          if (-not (Test-Path $libvosk)) {
-            # Fallback: scan the whole Vosk package directory
-            $libvosk = Get-ChildItem "$packagesDir\Vosk.*" -Recurse -Filter "libvosk.dll" |
-              Select-Object -ExpandProperty FullName -First 1
+          if (-not (Test-Path (Join-Path $voskDir "libvosk.dll"))) {
+            # Fallback: find libvosk.dll anywhere in the package and use its folder
+            $found = Get-ChildItem "$packagesDir\Vosk.*" -Recurse -Filter "libvosk.dll" |
+              Select-Object -First 1
+            if (-not $found) { throw "libvosk.dll not found in NuGet packages" }
+            $voskDir = $found.DirectoryName
           }
-          if (-not $libvosk) { throw "libvosk.dll not found in NuGet packages - check Vosk package structure" }
-          Write-Host "libvosk.dll -> $libvosk"
-          Copy-Item $libvosk $targetDir -Force
+          Write-Host "Copying all native DLLs from: $voskDir"
+          Get-ChildItem $voskDir -Filter "*.dll" | ForEach-Object {
+            Write-Host "  -> $($_.Name)"
+            Copy-Item $_.FullName $targetDir -Force
+          }
 
       - name: Publish VSTO (With Signing)
         run: |
