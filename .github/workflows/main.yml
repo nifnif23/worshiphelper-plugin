@@ -196,7 +196,6 @@ jobs:
             -gg `
             -cg VoskModelFiles `
             -dr VOSK_MODEL_DIR `
-            -var var.VoskModelDir `
             -out $outFile
 
           Write-Host "Generated: $outFile"
@@ -214,12 +213,11 @@ jobs:
 
       - name: Build MSI
         run: |
-          $targetDir   = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\bin\Release\"
-          $voskModelDir = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\bin\Release\data\vosk-model\"
+          $targetDir = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\bin\Release\"
           msbuild WorshipHelperSetup\WorshipHelperSetup.wixproj `
             /p:Configuration=Release `
             /p:Platform=x86 `
-            /p:DefineConstants="WorshipHelperVSTO.TargetDir=$targetDir;VoskModelDir=$voskModelDir" `
+            /p:DefineConstants="WorshipHelperVSTO.TargetDir=$targetDir" `
             /verbosity:normal
 
       - name: Upload MSI artifact
