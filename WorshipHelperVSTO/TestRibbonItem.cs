@@ -1,4 +1,4 @@
-﻿using Microsoft.Office.Core;
+using Microsoft.Office.Core;
 using Microsoft.Office.Tools.Ribbon;
 using Microsoft.Office.Interop.PowerPoint;
 using Microsoft.Win32;
@@ -35,34 +35,51 @@ namespace WorshipHelperVSTO
             {
                 try
                 {
-                    var lastTranslation = Microsoft.Win32.Registry.CurrentUser
-                        .OpenSubKey(@"SOFTWARE\WorshipHelper")
-                        ?.GetValue("LastBibleTranslation") as string ?? "ESV";
-
-                    var bible = OpenSongBibleReader.LoadTranslation(lastTranslation);
-
-                    var templateFiles = System.IO.Directory.GetFiles(
-                        ThisAddIn.appDataPath + @"\Templates", "*.pptx");
-                    if (templateFiles.Length == 0) return;
-                    var template = new ScriptureTemplate(templateFiles[0]);
-
-                    var parsed = FullReferenceParser.ParseFullReference(bible, e.NormalisedReference);
-                    if (parsed == null) return;
-
-                    var scriptureRef = ScriptureReference.parse(bible, parsed.Value.BookName, parsed.Value.Reference);
-                    if (scriptureRef == null) return;
-
-                    var verseNums = System.Linq.Enumerable.Range(scriptureRef.verseNumStart,
-                        scriptureRef.verseNumEnd - scriptureRef.verseNumStart + 1).ToList();
-
-                    new ScriptureManager().addScripture(template, bible,
-                        scriptureRef.bookName, scriptureRef.chapterNum, verseNums, verseNums.Count > 1);
+                    using (var toast = new SpeechConfirmForm(e.NormalisedReference))
+                    {
+                        toast.ShowDialog();
+                        if (!toast.Confirmed) return;
+                        InsertReference(toast.Reference);
+                    }
                 }
                 catch (System.Exception ex)
                 {
-                    log4net.LogManager.GetLogger(typeof(TestRibbonItem)).Error("Speech insert failed", ex);
+                    log4net.LogManager.GetLogger(typeof(TestRibbonItem)).Error("Speech toast failed", ex);
                 }
             }));
+        }
+
+        private void InsertReference(string normalisedReference)
+        {
+            try
+            {
+                var lastTranslation = Registry.CurrentUser
+                    .OpenSubKey(@"SOFTWARE\WorshipHelper")
+                    ?.GetValue("LastBibleTranslation") as string ?? "ESV";
+
+                var bible = OpenSongBibleReader.LoadTranslation(lastTranslation);
+
+                var templateFiles = System.IO.Directory.GetFiles(
+                    ThisAddIn.appDataPath + @"\Templates", "*.pptx");
+                if (templateFiles.Length == 0) return;
+                var template = new ScriptureTemplate(templateFiles[0]);
+
+                var parsed = FullReferenceParser.ParseFullReference(bible, normalisedReference);
+                if (parsed == null) return;
+
+                var scriptureRef = ScriptureReference.parse(bible, parsed.Value.BookName, parsed.Value.Reference);
+                if (scriptureRef == null) return;
+
+                var verseNums = Enumerable.Range(scriptureRef.verseNumStart,
+                    scriptureRef.verseNumEnd - scriptureRef.verseNumStart + 1).ToList();
+
+                new ScriptureManager().addScripture(template, bible,
+                    scriptureRef.bookName, scriptureRef.chapterNum, verseNums, verseNums.Count > 1);
+            }
+            catch (System.Exception ex)
+            {
+                log4net.LogManager.GetLogger(typeof(TestRibbonItem)).Error("Speech insert failed", ex);
+            }
         }
 
         private void btnToggleSpeech_Click(object sender, RibbonControlEventArgs e)
