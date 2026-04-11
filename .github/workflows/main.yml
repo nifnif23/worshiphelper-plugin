@@ -198,6 +198,12 @@ jobs:
             -dr VOSK_MODEL_DIR `
             -out $outFile
 
+          # heat emits Source="SourceDir\..." when no -var is used.
+          # Replace that placeholder with the real absolute path.
+          $raw = Get-Content $outFile -Raw
+          $raw = $raw.Replace('SourceDir\', "$modelDir\")
+          Set-Content $outFile $raw -Encoding UTF8
+
           Write-Host "Generated: $outFile"
 
           # Add VoskModel.wxs to the .wixproj so MSBuild compiles it
