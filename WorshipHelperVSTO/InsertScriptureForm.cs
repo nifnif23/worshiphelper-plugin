@@ -16,6 +16,10 @@ namespace WorshipHelperVSTO
         private static readonly ILog log = LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
         Bible bible;
 
+        // Debounce: prevent rapid double-click / Enter from triggering multiple inserts
+        private DateTime _lastInsertTime = DateTime.MinValue;
+        private const int DEBOUNCE_MS = 1000;
+
         public InsertScriptureForm()
         {
             log.Info("Loading InsertScriptureForm");
@@ -223,6 +227,14 @@ namespace WorshipHelperVSTO
         // -----------------------------------------------------------------------
         private void btnInsert_Click(object sender, EventArgs e)
         {
+            // Debounce: ignore rapid double-click / Enter presses
+            if ((DateTime.Now - _lastInsertTime).TotalMilliseconds < DEBOUNCE_MS)
+            {
+                log.Debug("Ignoring rapid repeat insert (debounce)");
+                return;
+            }
+            _lastInsertTime = DateTime.Now;
+
             log.Info("About to insert scripture");
 
             try
@@ -244,8 +256,20 @@ namespace WorshipHelperVSTO
                 return;
             }
 
-            log.Debug("Closing scripture window");
-            this.Close();
+            // Success — clear fields for next insert instead of closing,
+            // so the user can insert multiple scriptures in a row.
+            log.Debug("Scripture inserted successfully; clearing fields for next entry");
+            if (isBulkMode)
+            {
+                txtBulk.Clear();
+            }
+            else
+            {
+                txtReference.Clear();
+            }
+            btnInsert.Enabled = false;
+            lblStatus.Text = "\u2714 Inserted successfully!";
+            lblStatus.ForeColor = Color.DarkGreen;
         }
 
         private void InsertSingle()

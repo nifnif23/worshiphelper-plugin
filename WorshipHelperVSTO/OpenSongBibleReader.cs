@@ -5,22 +5,22 @@ using System.Xml.Linq;
 
 namespace WorshipHelperVSTO
 {
-    class Bible
+    public class Bible
     {
         public string name { get; set; }
         public List<Book> books = new List<Book>();
     }
-    class Book
+    public class Book
     {
         public string name { get; set; }
         public List<Chapter> chapters = new List<Chapter>();
     }
-    class Chapter
+    public class Chapter
     {
         public int number { get; set; }
         public List<Verse> verses = new List<Verse>();
     }
-    class Verse
+    public class Verse
     {
         public int number { get; set; }
         public string text { get; set; }

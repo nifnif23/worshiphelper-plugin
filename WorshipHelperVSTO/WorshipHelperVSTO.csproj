@@ -285,9 +285,7 @@
   <PropertyGroup>
     <ManifestKeyFile>WorshipHelperVSTO_TemporaryKey.pfx</ManifestKeyFile>
   </PropertyGroup>
-  <PropertyGroup>
-    <ManifestCertificateThumbprint>6796DE562A0FD861D9731D80EDAA46141E3EC965</ManifestCertificateThumbprint>
-  </PropertyGroup>
+
   <!-- Include the build rules for a C# project. -->
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <!-- Include additional build rules for an Office application add-in. -->
