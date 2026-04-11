@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true  # Silences the Node.js deprecation warning
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true 
 
 jobs:
   build:
@@ -17,30 +17,16 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      # Find whichever WiX version is already on the runner
       - name: Set WiX environment variable
         run: |
           $wixPath = (Get-ChildItem "C:\Program Files (x86)" -Filter "WiX Toolset*" | Select-Object -First 1).FullName
           echo "WIX=$wixPath" >> $env:GITHUB_ENV
-          echo "Found WiX at: $wixPath"
 
       - name: Restore NuGet packages
         run: nuget restore WorshipHelper.sln
 
-      # Phase 1: Compile the DLL without any signing / ClickOnce manifests.
-      # This avoids the "ManageCertificateStore" / "Cannot sign" errors in CI.
-      - name: Build VSTO (DLL Only)
-        run: |
-          msbuild WorshipHelperVSTO\WorshipHelperVSTO.csproj `
-            /p:Configuration=Release `
-            /p:Platform=AnyCPU `
-            /p:SignManifests=true `
-            /p:GenerateClickOnceManifests=false `
-            /p:ManifestCertificateThumbprint="0000000000000000000000000000000000000000" `
-            /verbosity:minimal
-
-      # Phase 2: Create a self-signed certificate so that the Publish step
-      # can produce a valid .vsto manifest (required by the MSI).
+      # PHASE 1: Generate the certificate BEFORE building.
+      # This puts the certificate in the actual Windows Store of the runner.
       - name: Generate self-signed certificate
         run: |
           $cert = New-SelfSignedCertificate `
@@ -54,8 +40,8 @@ jobs:
           $pwd = ConvertTo-SecureString -String "build123" -Force -AsPlainText
           $pfxPath = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\ci-cert.pfx"
           Export-PfxCertificate -Cert $cert -FilePath $pfxPath -Password $pwd | Out-Null
-
-          # Import to LocalMachine so all MSBuild sub-processes can find it
+          
+          # Import to LocalMachine so MSBuild sub-processes can find it
           $store = New-Object System.Security.Cryptography.X509Certificates.X509Store("My", "LocalMachine")
           $store.Open("ReadWrite")
           $store.Add($cert)
@@ -63,9 +49,22 @@ jobs:
 
           echo "CERT_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
           echo "PFX_PATH=$pfxPath" >> $env:GITHUB_ENV
-          echo "Certificate generated: $($cert.Thumbprint)"
 
-      # Phase 3: Publish with signing so the .vsto manifest is created.
+      # PHASE 2: Build the VSTO using the REAL thumbprint generated above.
+      # We still disable ClickOnce manifest generation here just to keep the build fast.
+      - name: Build VSTO (Release)
+        run: |
+          msbuild WorshipHelperVSTO\WorshipHelperVSTO.csproj `
+            /p:Configuration=Release `
+            /p:Platform=AnyCPU `
+            /p:SignManifests=true `
+            /p:GenerateClickOnceManifests=false `
+            /p:ManifestCertificateThumbprint="$env:CERT_THUMBPRINT" `
+            /p:ManifestKeyFile="$env:PFX_PATH" `
+            /p:ManifestCertificatePassword=build123 `
+            /verbosity:minimal
+
+      # PHASE 3: Publish with signing (creates the .vsto manifest for the MSI).
       - name: Publish VSTO (With Signing)
         run: |
           msbuild WorshipHelperVSTO\WorshipHelperVSTO.csproj `
@@ -79,19 +78,7 @@ jobs:
             /p:ManifestCertificatePassword=build123 `
             /verbosity:normal
 
-      # Show what got published so we can debug if MSI step fails
-      - name: List publish output
-        run: |
-          echo "=== Publish folder contents ==="
-          Get-ChildItem -Recurse WorshipHelperVSTO\publish\ | Select-Object FullName
-          echo "=== bin\Release contents ==="
-          Get-ChildItem -Recurse WorshipHelperVSTO\bin\Release\ | Select-Object FullName
-        continue-on-error: true
-
-      # WiX resolves $(var.WorshipHelperVSTO.TargetDir) from the ProjectReference automatically.
-      # We strip the reference to avoid an x86 platform mismatch, then supply the path manually.
-      # TargetDir must point to bin\Release\ (the plain build output), NOT the publish folder —
-      # Product.wxs expects undecorated DLLs, not the .deploy files ClickOnce publish produces.
+      # (Steps for Removing Project Reference and Building MSI remain the same)
       - name: Remove VSTO project reference from WiX project
         run: |
           $wixproj = "WorshipHelperSetup\WorshipHelperSetup.wixproj"
@@ -101,7 +88,6 @@ jobs:
           $refs = $xml.SelectNodes("//ms:ProjectReference", $ns)
           foreach ($ref in $refs) { $ref.ParentNode.RemoveChild($ref) | Out-Null }
           $xml.Save((Resolve-Path $wixproj))
-          echo "ProjectReference nodes removed: $($refs.Count)"
 
       - name: Build MSI
         run: |
@@ -117,4 +103,3 @@ jobs:
         with:
           name: WorshipHelperSetup
           path: WorshipHelperSetup\bin\Release\**\WorshipHelperSetup.msi
-          if-no-files-found: error
