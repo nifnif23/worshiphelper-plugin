@@ -73,11 +73,22 @@
     <Reference Include="log4net, Version=2.0.12.0, Culture=neutral, PublicKeyToken=669e0ddf0bb1aa2a, processorArchitecture=MSIL">
       <HintPath>..\packages\log4net.2.0.12\lib\net45\log4net.dll</HintPath>
     </Reference>
+    <Reference Include="NAudio, Version=2.2.1.0, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>..\packages\NAudio.2.2.1\lib\net472\NAudio.dll</HintPath>
+    </Reference>
+    <Reference Include="NAudio.Core, Version=2.2.1.0, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>..\packages\NAudio.2.2.1\lib\net472\NAudio.Core.dll</HintPath>
+    </Reference>
+    <Reference Include="NAudio.WinMM, Version=2.2.1.0, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>..\packages\NAudio.2.2.1\lib\net472\NAudio.WinMM.dll</HintPath>
+    </Reference>
+    <Reference Include="Vosk">
+      <HintPath>..\packages\Vosk.0.3.45\lib\netstandard2.0\Vosk.dll</HintPath>
+    </Reference>
     <Reference Include="System" />
     <Reference Include="System.Configuration" />
     <Reference Include="System.Data" />
     <Reference Include="System.Drawing" />
-    <Reference Include="System.Speech" />
     <Reference Include="System.Web" />
     <Reference Include="System.Windows.Forms" />
     <Reference Include="System.Xml" />
@@ -138,6 +149,11 @@
     
     <None Include="App.config" />
     <None Include="data\Bibles\ESV.xmm"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></None>
+    <!-- Vosk model: copied to output so the MSI can bundle it -->
+    <None Include="data\vosk-model\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>data\vosk-model\%(RecursiveDir)%(Filename)%(Extension)</Link>
+    </None>
     <None Include="data\Bibles\NASB.xmm"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></None>
     <None Include="data\Templates\Default.pptx"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></None>
     <None Include="packages.config" />

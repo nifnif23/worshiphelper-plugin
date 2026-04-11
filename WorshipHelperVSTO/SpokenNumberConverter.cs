@@ -368,19 +368,25 @@ namespace WorshipHelperVSTO
                 return val.HasValue ? (val.Value.ToString(), (string)null) : ((string)null, (string)null);
             }
 
-            // Try each split point from left to right
-            // Prefer the first valid split (smallest chapter number)
+            // Try each split point from left to right.
+            // Prefer the first valid split (smallest chapter number).
+            // NOTE: we do NOT blindly skip splits where the right side starts with a filler
+            // like "and" — "twenty and six" needs split before "and", and WordsToNumber
+            // handles interior "and" correctly ("one hundred and three" -> 103).
             for (int splitAt = 1; splitAt < tokens.Count; splitAt++)
             {
                 string leftPhrase = string.Join(" ", tokens.Take(splitAt));
                 string rightPhrase = string.Join(" ", tokens.Skip(splitAt));
 
-                // Skip if the right part starts with a filler (would be part of the left)
                 string firstRight = tokens[splitAt];
-                if (Fillers.Contains(firstRight)) continue;
 
-                // The word "hundred" alone on the right makes no sense for a verse
+                // "hundred" alone on the right makes no sense for a verse
                 if (firstRight == "hundred") continue;
+
+                // If the right side is nothing but fillers, absorb into left — don't split here
+                bool rightIsOnlyFiller = Fillers.Contains(firstRight) &&
+                                         tokens.Skip(splitAt).All(t => Fillers.Contains(t));
+                if (rightIsOnlyFiller) continue;
 
                 int? leftNum = WordsToNumber(leftPhrase);
                 int? rightNum = WordsToNumber(rightPhrase);

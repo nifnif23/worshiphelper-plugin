@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true 
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build:
@@ -25,8 +25,32 @@ jobs:
       - name: Restore NuGet packages
         run: nuget restore WorshipHelper.sln
 
-      # PHASE 1: Generate the certificate BEFORE building.
-      # This puts the certificate in the actual Windows Store of the runner.
+      # -----------------------------------------------------------------------
+      # Download Vosk model (small ~50 MB, ships with the MSI for offline use)
+      # To use the large model (~1.8 GB) instead, change the URL and folder name.
+      # -----------------------------------------------------------------------
+      - name: Download Vosk speech model
+        run: |
+          $modelUrl  = "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip"
+          $modelZip  = "$env:TEMP\vosk-model.zip"
+          $modelDest = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\data\vosk-model"
+
+          Write-Host "Downloading Vosk model..."
+          Invoke-WebRequest -Uri $modelUrl -OutFile $modelZip -UseBasicParsing
+
+          Write-Host "Extracting..."
+          Expand-Archive -Path $modelZip -DestinationPath "$env:TEMP\vosk-extracted" -Force
+
+          # The zip contains a single subfolder (e.g. vosk-model-small-en-us-0.15\).
+          # Move its contents to data\vosk-model\ so the path is predictable.
+          $inner = Get-ChildItem "$env:TEMP\vosk-extracted" | Select-Object -First 1
+          Move-Item -Path $inner.FullName -Destination $modelDest -Force
+
+          Write-Host "Vosk model ready at: $modelDest"
+
+      # -----------------------------------------------------------------------
+      # Certificate (unchanged)
+      # -----------------------------------------------------------------------
       - name: Generate self-signed certificate
         run: |
           $cert = New-SelfSignedCertificate `
@@ -40,8 +64,7 @@ jobs:
           $pwd = ConvertTo-SecureString -String "build123" -Force -AsPlainText
           $pfxPath = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\ci-cert.pfx"
           Export-PfxCertificate -Cert $cert -FilePath $pfxPath -Password $pwd | Out-Null
-          
-          # Import to LocalMachine so MSBuild sub-processes can find it
+
           $store = New-Object System.Security.Cryptography.X509Certificates.X509Store("My", "LocalMachine")
           $store.Open("ReadWrite")
           $store.Add($cert)
@@ -56,13 +79,10 @@ jobs:
           $versionLine = "[assembly: AssemblyFileVersion(`"1.4.0.$runNumber`")]"
           $path = "WorshipHelperVSTO\Properties\AssemblyInfo.cs"
           $content = Get-Content $path -Raw
-          # Remove any existing AssemblyFileVersion line then append new one
           $content = $content -replace '(?m)^.*AssemblyFileVersion.*\r?\n', ''
           $content = $content.TrimEnd() + "`r`n$versionLine`r`n"
           Set-Content $path $content -NoNewline
 
-      # PHASE 2: Build the VSTO using the REAL thumbprint generated above.
-      # We still disable ClickOnce manifest generation here just to keep the build fast.
       - name: Build VSTO (Release)
         run: |
           msbuild WorshipHelperVSTO\WorshipHelperVSTO.csproj `
@@ -75,7 +95,6 @@ jobs:
             /p:ManifestCertificatePassword=build123 `
             /verbosity:minimal
 
-      # PHASE 3: Publish with signing (creates the .vsto manifest for the MSI).
       - name: Publish VSTO (With Signing)
         run: |
           msbuild WorshipHelperVSTO\WorshipHelperVSTO.csproj `
@@ -89,7 +108,6 @@ jobs:
             /p:ManifestCertificatePassword=build123 `
             /verbosity:normal
 
-      # (Steps for Removing Project Reference and Building MSI remain the same)
       - name: Remove VSTO project reference from WiX project
         run: |
           $wixproj = "WorshipHelperSetup\WorshipHelperSetup.wixproj"

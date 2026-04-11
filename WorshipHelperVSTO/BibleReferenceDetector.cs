@@ -90,7 +90,8 @@ namespace WorshipHelperVSTO
             "read", "reading", "turn", "turning", "go", "going", "look", "looking",
             "open", "opening", "find", "finding", "flip", "flipping",
             "let's", "lets", "let", "us", "please", "now", "okay", "ok",
-            "to", "at", "in", "from", "the", "book", "of", "passage",
+            "to", "at", "in", "from", "the", "book", "passage",
+            // NOTE: "of" intentionally removed — it breaks "Song of Solomon" matching
             "scripture", "text", "it's", "its", "says", "we're", "were",
             "i'm", "im", "today", "tonight", "this", "morning", "evening",
         };
@@ -104,7 +105,7 @@ namespace WorshipHelperVSTO
         /// Can be adjusted for noisier environments (raise) or controlled settings (lower).
         /// Default: 0.5
         /// </summary>
-        public static double MinConfidence { get; set; } = 0.5;
+        public static double MinConfidence { get; set; } = 0.4; // Lowered from 0.5 — fuzzy book name matches score ~0.4-0.5
 
         /// <summary>
         /// Attempts to detect one or more Bible references in the given raw text.
@@ -137,7 +138,7 @@ namespace WorshipHelperVSTO
                 }
 
                 // Try to match a Bible book name starting at this position
-                var (book, tokensConsumed) = TryMatchBook(tokens, pos);
+                var (book, tokensConsumed, wasFuzzy) = TryMatchBook(tokens, pos);
                 if (book != null)
                 {
                     int afterBook = pos + tokensConsumed;
@@ -165,7 +166,7 @@ namespace WorshipHelperVSTO
 
                         if (refFragment != null)
                         {
-                            double confidence = ComputeConfidence(book, refFragment, tokensConsumed);
+                            double confidence = ComputeConfidence(book, refFragment, tokensConsumed, wasFuzzy);
                             if (confidence >= MinConfidence)
                             {
                                 string normalised = $"{book.Canonical} {refFragment}";
@@ -217,10 +218,12 @@ namespace WorshipHelperVSTO
         /// Uses greedy matching (longest match wins).
         /// Returns (BookEntry, tokensConsumed) or (null, 0).
         /// </summary>
-        private static (BookEntry book, int tokensConsumed) TryMatchBook(List<string> tokens, int startPos)
+        private static (BookEntry book, int tokensConsumed, bool wasFuzzy) TryMatchBook(List<string> tokens, int startPos)
         {
             BookEntry bestMatch = null;
             int bestLength = 0;
+            bool bestWasExact = false;
+            bool bestHadFuzzy = false;
 
             foreach (var book in Books)
             {
@@ -230,27 +233,90 @@ namespace WorshipHelperVSTO
                     int len = varTokens.Length;
 
                     if (startPos + len > tokens.Count) continue;
-                    if (len <= bestLength) continue; // Only interested in longer matches
+                    if (len < bestLength) continue; // Only interested in longer or equal matches
 
-                    bool match = true;
+                    bool exactMatch = true;
+                    bool fuzzyMatch = true;
+                    int fuzzyErrors = 0;
+
                     for (int i = 0; i < len; i++)
                     {
-                        if (!string.Equals(tokens[startPos + i], varTokens[i], StringComparison.OrdinalIgnoreCase))
+                        string spoken = tokens[startPos + i];
+                        string expected = varTokens[i];
+
+                        if (!string.Equals(spoken, expected, StringComparison.OrdinalIgnoreCase))
                         {
-                            match = false;
-                            break;
+                            exactMatch = false;
+
+                            // Fuzzy matching for book name words.
+                            // Short tokens (digits, "of", "1st") must be exact — only fuzz words of 5+ chars.
+                            // Allowed edit distance scales with word length so obscure long book names
+                            // like "Habakkuk" (8) or "Thessalonians" (13) get more slack than short ones.
+                            //   5–7 chars  → allow 2 edits  (e.g. "isaiah" → "isaian")
+                            //   8–10 chars → allow 3 edits  (e.g. "habakkuk" → "habacuc")
+                            //   11+ chars  → allow 4 edits  (e.g. "thessalonians" → "thesalonians")
+                            int allowedEdits = expected.Length >= 11 ? 4
+                                            : expected.Length >= 8  ? 3
+                                            : expected.Length >= 5  ? 2
+                                            : 0;
+
+                            if (allowedEdits > 0 && LevenshteinDistance(
+                                    spoken.ToLowerInvariant(), expected.ToLowerInvariant()) <= allowedEdits)
+                            {
+                                fuzzyErrors++;
+                                // Allow at most one fuzzy token per variant to avoid false positives
+                                if (fuzzyErrors > 1) { fuzzyMatch = false; break; }
+                            }
+                            else
+                            {
+                                fuzzyMatch = false;
+                                break;
+                            }
                         }
                     }
 
-                    if (match)
+                    bool isMatch = exactMatch || fuzzyMatch;
+                    if (!isMatch) continue;
+
+                    // Prefer exact over fuzzy; prefer longer over shorter
+                    bool betterThanCurrent = (len > bestLength) ||
+                                            (len == bestLength && exactMatch && !bestWasExact);
+                    if (betterThanCurrent)
                     {
                         bestMatch = book;
                         bestLength = len;
+                        bestWasExact = exactMatch;
+                        bestHadFuzzy = !exactMatch;
                     }
                 }
             }
 
-            return (bestMatch, bestLength);
+            return (bestMatch, bestLength, bestHadFuzzy);
+        }
+
+        /// <summary>
+        /// Standard Levenshtein edit distance. Used for fuzzy book name matching
+        /// to handle speech engine mishearings like "corinthian" vs "corinthians".
+        /// </summary>
+        private static int LevenshteinDistance(string a, string b)
+        {
+            if (string.IsNullOrEmpty(a)) return b?.Length ?? 0;
+            if (string.IsNullOrEmpty(b)) return a.Length;
+
+            var d = new int[a.Length + 1, b.Length + 1];
+            for (int i = 0; i <= a.Length; i++) d[i, 0] = i;
+            for (int j = 0; j <= b.Length; j++) d[0, j] = j;
+
+            for (int i = 1; i <= a.Length; i++)
+            for (int j = 1; j <= b.Length; j++)
+            {
+                int cost = a[i - 1] == b[j - 1] ? 0 : 1;
+                d[i, j] = Math.Min(
+                    Math.Min(d[i - 1, j] + 1, d[i, j - 1] + 1),
+                    d[i - 1, j - 1] + cost);
+            }
+
+            return d[a.Length, b.Length];
         }
 
         // -----------------------------------------------------------------------
@@ -280,7 +346,7 @@ namespace WorshipHelperVSTO
         // Confidence scoring
         // -----------------------------------------------------------------------
 
-        private static double ComputeConfidence(BookEntry book, string refFragment, int bookTokenCount)
+        private static double ComputeConfidence(BookEntry book, string refFragment, int bookTokenCount, bool wasFuzzy = false)
         {
             double score = 0.4; // Base score for having a recognised book name
 
@@ -296,6 +362,10 @@ namespace WorshipHelperVSTO
 
             // The reference fragment should have at least one digit
             if (refFragment.Any(char.IsDigit)) score += 0.1;
+
+            // Fuzzy book name match: small penalty, but still accept it
+            // (the engine misheard an uncommon word — trust it)
+            if (wasFuzzy) score -= 0.1;
 
             return Math.Min(score, 1.0);
         }

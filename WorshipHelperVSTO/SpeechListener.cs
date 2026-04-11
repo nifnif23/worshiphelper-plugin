@@ -1,146 +1,101 @@
 // ============================================================================
 // SpeechListener.cs
-// Windows speech-to-text listener using System.Speech (built-in, free, offline).
+// Real-time speech recognition using Vosk (offline, free, open-source).
 //
-// Wraps SpeechRecognitionEngine in an easy start/stop interface with events
-// for recognised phrases.
+// Replaces the old System.Speech implementation. Drop-in compatible —
+// same public API, same events. No cloud, no cost, much better accuracy.
 //
-// Prerequisites:
-//   - Reference: System.Speech (GAC assembly, no NuGet needed)
-//   - Target: .NET Framework 4.7.2+
-//   - Windows OS with speech recognition support
+// Prerequisites (NuGet):
+//   Vosk                  — add via NuGet Package Manager
+//   NAudio                — add via NuGet Package Manager (audio capture)
 //
-// Drop into:  WorshipHelperVSTO/SpeechListener.cs
-// Namespace:  WorshipHelperVSTO
+// Model download (one-time, manual step — see SETUP.md):
+//   Small (~50 MB, fast):  https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
+//   Large (~1.8 GB, best): https://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip
+//   Extract to:            %APPDATA%\WorshipHelper\vosk-model\
+//
 // ============================================================================
 
 using System;
-using System.Globalization;
-using System.Speech.Recognition;
+using System.IO;
+using System.Text.RegularExpressions;
 using log4net;
+using NAudio.Wave;
+using Vosk;
 
 namespace WorshipHelperVSTO
 {
-    // -----------------------------------------------------------------------
-    // Event args
-    // -----------------------------------------------------------------------
-
-    /// <summary>
-    /// Carries raw speech recognition results to subscribers.
-    /// </summary>
     public class SpeechRecognisedEventArgs : EventArgs
     {
-        /// <summary>
-        /// The raw text recognised by the speech engine.
-        /// </summary>
         public string Text { get; set; }
-
-        /// <summary>
-        /// Engine confidence (0.0–1.0) in the recognition result.
-        /// </summary>
         public float Confidence { get; set; }
     }
 
-    /// <summary>
-    /// Carries status/error information from the speech listener.
-    /// </summary>
     public class SpeechListenerStatusEventArgs : EventArgs
     {
         public string Message { get; set; }
         public bool IsError { get; set; }
     }
 
-    // -----------------------------------------------------------------------
-    // SpeechListener
-    // -----------------------------------------------------------------------
-
-    /// <summary>
-    /// Provides a managed wrapper around the Windows built-in speech recognition
-    /// engine (System.Speech.Recognition.SpeechRecognitionEngine).
-    ///
-    /// Features:
-    ///   - Fully offline / free — uses the Windows Desktop speech engine.
-    ///   - Start / Stop / IsListening API.
-    ///   - Continuous dictation mode (free-form speech, not fixed grammar).
-    ///   - Fires SpeechRecognised event for every recognised phrase.
-    ///   - Configurable minimum confidence threshold to filter low-quality results.
-    ///   - Thread-safe disposal.
-    ///
-    /// Usage:
-    ///   var listener = new SpeechListener();
-    ///   listener.SpeechRecognised += (s, e) => Console.WriteLine(e.Text);
-    ///   listener.Start();
-    ///   // … later …
-    ///   listener.Stop();
-    ///   listener.Dispose();
-    /// </summary>
     public class SpeechListener : IDisposable
     {
         private static readonly ILog log = LogManager.GetLogger(typeof(SpeechListener));
 
-        private SpeechRecognitionEngine _engine;
+        // Model path resolution order:
+        // 1. Next to the installed DLL (data\vosk-model\) — bundled by the MSI
+        // 2. %APPDATA%\WorshipHelper\vosk-model\ — manual install fallback
+        private static readonly string DefaultModelPath = ResolveModelPath();
+
+        private static string ResolveModelPath()
+        {
+            string dllDir = Path.GetDirectoryName(
+                System.Reflection.Assembly.GetExecutingAssembly().Location) ?? "";
+            string bundled = Path.Combine(dllDir, "data", "vosk-model");
+            if (Directory.Exists(bundled)) return bundled;
+
+            return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "WorshipHelper", "vosk-model");
+        }
+
+        private VoskRecognizer _recogniser;
+        private WaveInEvent _waveIn;
         private bool _isListening;
         private bool _disposed;
         private readonly object _lock = new object();
 
-        // -----------------------------------------------------------------------
+        // -------------------------------------------------------------------------
         // Configuration
-        // -----------------------------------------------------------------------
+        // -------------------------------------------------------------------------
 
         /// <summary>
-        /// Minimum engine confidence required before the SpeechRecognised event fires.
-        /// Range: 0.0 – 1.0.  Default: 0.3 (fairly permissive — the Bible reference
-        /// detector adds its own confidence filter on top).
-        ///
-        /// Raise this value if the environment is very noisy and you're getting
-        /// too many false recognitions.  Lower it in quiet settings.
+        /// Path to the extracted Vosk model directory.
+        /// Defaults to %APPDATA%\WorshipHelper\vosk-model\
         /// </summary>
-        public float MinEngineConfidence { get; set; } = 0.3f;
+        public string ModelPath { get; set; } = DefaultModelPath;
 
         /// <summary>
-        /// The culture/language for speech recognition.
-        /// Default: en-US.  Change to en-GB, en-AU, etc. as needed.
-        /// The corresponding Windows language pack must be installed.
+        /// Minimum confidence (0.0-1.0) before SpeechRecognised fires.
+        /// Default: 0.45
         /// </summary>
-        public CultureInfo Culture { get; set; } = new CultureInfo("en-US");
+        public float MinEngineConfidence { get; set; } = 0.45f;
 
-        // -----------------------------------------------------------------------
+        // -------------------------------------------------------------------------
         // Events
-        // -----------------------------------------------------------------------
+        // -------------------------------------------------------------------------
 
-        /// <summary>
-        /// Fired every time the engine recognises a spoken phrase above the
-        /// MinEngineConfidence threshold.
-        /// </summary>
         public event EventHandler<SpeechRecognisedEventArgs> SpeechRecognised;
-
-        /// <summary>
-        /// Fired when the listener encounters an error or notable status change
-        /// (e.g., audio source problems, engine restart).
-        /// </summary>
         public event EventHandler<SpeechListenerStatusEventArgs> StatusChanged;
 
-        // -----------------------------------------------------------------------
-        // Properties
-        // -----------------------------------------------------------------------
-
-        /// <summary>
-        /// Returns true if the listener is currently active and processing audio.
-        /// </summary>
         public bool IsListening
         {
             get { lock (_lock) return _isListening; }
         }
 
-        // -----------------------------------------------------------------------
-        // Start / Stop
-        // -----------------------------------------------------------------------
+        // -------------------------------------------------------------------------
+        // Start / Stop / Toggle
+        // -------------------------------------------------------------------------
 
-        /// <summary>
-        /// Initialises the speech recognition engine and starts listening
-        /// to the default audio input device (microphone).
-        /// Safe to call multiple times — subsequent calls are no-ops if already listening.
-        /// </summary>
         public void Start()
         {
             lock (_lock)
@@ -150,36 +105,40 @@ namespace WorshipHelperVSTO
 
                 try
                 {
-                    log.Info("SpeechListener: Initialising speech recognition engine…");
-                    RaiseStatus("Initialising speech recognition…");
+                    log.Info("SpeechListener (Vosk): Initialising...");
+                    RaiseStatus("Initialising speech recognition...");
 
-                    _engine = new SpeechRecognitionEngine(Culture);
+                    if (!Directory.Exists(ModelPath))
+                        throw new DirectoryNotFoundException(
+                            $"Vosk model not found at: {ModelPath}\n" +
+                            "Download a model from https://alphacephei.com/vosk/models and " +
+                            $"extract it to {ModelPath}");
 
-                    // Use free-form dictation grammar — we don't want a fixed grammar
-                    // because the speaker may say anything.  The Bible reference detector
-                    // layer handles the filtering.
-                    _engine.LoadGrammar(new DictationGrammar());
+                    Vosk.Vosk.SetLogLevel(-1);
 
-                    // Wire up events
-                    _engine.SpeechRecognized += OnSpeechRecognized;
-                    _engine.SpeechRecognitionRejected += OnSpeechRejected;
-                    _engine.RecognizeCompleted += OnRecognizeCompleted;
-                    _engine.AudioStateChanged += OnAudioStateChanged;
+                    var model = new Model(ModelPath);
+                    _recogniser = new VoskRecognizer(model, 16000f);
+                    _recogniser.SetMaxAlternatives(0);
+                    _recogniser.SetWords(true);
 
-                    // Use the default system microphone
-                    _engine.SetInputToDefaultAudioDevice();
+                    _waveIn = new WaveInEvent
+                    {
+                        WaveFormat = new WaveFormat(16000, 1),
+                        BufferMilliseconds = 100,
+                    };
 
-                    // Start continuous recognition (asynchronous, non-blocking)
-                    _engine.RecognizeAsync(RecognizeMode.Multiple);
+                    _waveIn.DataAvailable += OnDataAvailable;
+                    _waveIn.RecordingStopped += OnRecordingStopped;
+                    _waveIn.StartRecording();
 
                     _isListening = true;
 
-                    log.Info("SpeechListener: Now listening.");
-                    RaiseStatus("Listening for Bible references…");
+                    log.Info("SpeechListener (Vosk): Now listening.");
+                    RaiseStatus("Listening for Bible references...");
                 }
                 catch (Exception ex)
                 {
-                    log.Error("SpeechListener: Failed to start speech recognition.", ex);
+                    log.Error("SpeechListener (Vosk): Failed to start.", ex);
                     RaiseStatus($"Failed to start: {ex.Message}", isError: true);
                     CleanupEngine();
                     throw;
@@ -187,65 +146,91 @@ namespace WorshipHelperVSTO
             }
         }
 
-        /// <summary>
-        /// Stops listening and releases the audio device.
-        /// Safe to call multiple times — subsequent calls are no-ops.
-        /// The listener can be restarted after stopping.
-        /// </summary>
         public void Stop()
         {
             lock (_lock)
             {
                 if (!_isListening) return;
 
-                try
-                {
-                    log.Info("SpeechListener: Stopping…");
-                    _engine?.RecognizeAsyncCancel();
-                }
-                catch (Exception ex)
-                {
-                    log.Warn("SpeechListener: Error during RecognizeAsyncCancel.", ex);
-                }
+                log.Info("SpeechListener (Vosk): Stopping...");
+
+                try { _waveIn?.StopRecording(); }
+                catch (Exception ex) { log.Warn("SpeechListener: Error stopping WaveIn.", ex); }
 
                 CleanupEngine();
                 _isListening = false;
 
-                log.Info("SpeechListener: Stopped.");
+                log.Info("SpeechListener (Vosk): Stopped.");
                 RaiseStatus("Speech listening stopped.");
             }
         }
 
-        /// <summary>
-        /// Toggles between listening and not listening.
-        /// Returns the new state (true = listening, false = stopped).
-        /// </summary>
         public bool Toggle()
         {
-            if (IsListening)
+            if (IsListening) { Stop(); return false; }
+            else { Start(); return true; }
+        }
+
+        // -------------------------------------------------------------------------
+        // Audio pipeline
+        // -------------------------------------------------------------------------
+
+        private void OnDataAvailable(object sender, WaveInEventArgs e)
+        {
+            bool finalResult;
+            lock (_lock)
             {
-                Stop();
-                return false;
+                if (_recogniser == null) return;
+                finalResult = _recogniser.AcceptWaveform(e.Buffer, e.BytesRecorded);
             }
-            else
+
+            if (finalResult)
             {
-                Start();
-                return true;
+                string json;
+                lock (_lock)
+                {
+                    if (_recogniser == null) return;
+                    json = _recogniser.Result();
+                }
+                ProcessResult(json);
             }
         }
 
-        // -----------------------------------------------------------------------
-        // Engine event handlers
-        // -----------------------------------------------------------------------
-
-        private void OnSpeechRecognized(object sender, SpeechRecognizedEventArgs e)
+        private void OnRecordingStopped(object sender, StoppedEventArgs e)
         {
-            if (e.Result == null) return;
+            if (e.Exception != null)
+            {
+                log.Warn($"SpeechListener: Recording stopped with error: {e.Exception.Message}");
+                RaiseStatus($"Recording error: {e.Exception.Message}", isError: true);
+            }
+        }
 
-            string text = e.Result.Text;
-            float confidence = e.Result.Confidence;
+        /// <summary>
+        /// Parses a Vosk JSON result and fires SpeechRecognised if confidence passes.
+        ///
+        /// Vosk result JSON example:
+        /// {
+        ///   "result": [
+        ///     {"conf": 0.98, "word": "john"},
+        ///     {"conf": 0.91, "word": "three"},
+        ///     {"conf": 0.87, "word": "sixteen"}
+        ///   ],
+        ///   "text": "john three sixteen"
+        /// }
+        /// </summary>
+        private void ProcessResult(string json)
+        {
+            if (string.IsNullOrWhiteSpace(json)) return;
 
-            log.Debug($"SpeechListener: Recognised \"{text}\" (confidence={confidence:F2})");
+            var textMatch = Regex.Match(json, "\"text\"\\s*:\\s*\"([^\"]+)\"");
+            if (!textMatch.Success) return;
+
+            string text = textMatch.Groups[1].Value.Trim();
+            if (string.IsNullOrWhiteSpace(text)) return;
+
+            float confidence = ExtractAverageConfidence(json);
+
+            log.Debug($"SpeechListener (Vosk): \"{text}\" (conf={confidence:F2})");
 
             if (confidence < MinEngineConfidence)
             {
@@ -253,68 +238,59 @@ namespace WorshipHelperVSTO
                 return;
             }
 
-            // Fire the event on the current thread (engine's internal thread).
-            // Subscribers should marshal to UI thread if needed.
             SpeechRecognised?.Invoke(this, new SpeechRecognisedEventArgs
             {
                 Text = text,
-                Confidence = confidence
+                Confidence = confidence,
             });
         }
 
-        private void OnSpeechRejected(object sender, SpeechRecognitionRejectedEventArgs e)
+        private static float ExtractAverageConfidence(string json)
         {
-            // This fires when the engine hears something but cannot match it to any grammar.
-            // With DictationGrammar this is rare, but can happen in very noisy environments.
-            log.Debug("SpeechListener: Speech rejected (could not recognise).");
-        }
+            var matches = Regex.Matches(json, "\"conf\"\\s*:\\s*([0-9.]+)");
+            if (matches.Count == 0) return 0.8f;
 
-        private void OnRecognizeCompleted(object sender, RecognizeCompletedEventArgs e)
-        {
-            if (e.Error != null)
+            float total = 0f;
+            int count = 0;
+            foreach (System.Text.RegularExpressions.Match m in matches)
             {
-                log.Warn($"SpeechListener: Recognition completed with error: {e.Error.Message}");
-                RaiseStatus($"Recognition error: {e.Error.Message}", isError: true);
+                if (float.TryParse(m.Groups[1].Value,
+                    System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out float val))
+                {
+                    total += val;
+                    count++;
+                }
             }
-
-            if (e.Cancelled)
-            {
-                log.Debug("SpeechListener: Recognition was cancelled.");
-            }
+            return count > 0 ? total / count : 0.8f;
         }
 
-        private void OnAudioStateChanged(object sender, AudioStateChangedEventArgs e)
-        {
-            log.Debug($"SpeechListener: Audio state → {e.AudioState}");
-        }
-
-        // -----------------------------------------------------------------------
+        // -------------------------------------------------------------------------
         // Cleanup
-        // -----------------------------------------------------------------------
+        // -------------------------------------------------------------------------
 
         private void CleanupEngine()
         {
-            if (_engine != null)
+            if (_waveIn != null)
             {
                 try
                 {
-                    _engine.SpeechRecognized -= OnSpeechRecognized;
-                    _engine.SpeechRecognitionRejected -= OnSpeechRejected;
-                    _engine.RecognizeCompleted -= OnRecognizeCompleted;
-                    _engine.AudioStateChanged -= OnAudioStateChanged;
-                    _engine.Dispose();
+                    _waveIn.DataAvailable -= OnDataAvailable;
+                    _waveIn.RecordingStopped -= OnRecordingStopped;
+                    _waveIn.Dispose();
                 }
-                catch (Exception ex)
-                {
-                    log.Warn("SpeechListener: Error during engine cleanup.", ex);
-                }
-                _engine = null;
+                catch (Exception ex) { log.Warn("SpeechListener: Error disposing WaveIn.", ex); }
+                _waveIn = null;
+            }
+
+            if (_recogniser != null)
+            {
+                try { _recogniser.Dispose(); }
+                catch (Exception ex) { log.Warn("SpeechListener: Error disposing recogniser.", ex); }
+                _recogniser = null;
             }
         }
-
-        // -----------------------------------------------------------------------
-        // IDisposable
-        // -----------------------------------------------------------------------
 
         public void Dispose()
         {
@@ -326,16 +302,12 @@ namespace WorshipHelperVSTO
             }
         }
 
-        // -----------------------------------------------------------------------
-        // Helpers
-        // -----------------------------------------------------------------------
-
         private void RaiseStatus(string message, bool isError = false)
         {
             StatusChanged?.Invoke(this, new SpeechListenerStatusEventArgs
             {
                 Message = message,
-                IsError = isError
+                IsError = isError,
             });
         }
     }
