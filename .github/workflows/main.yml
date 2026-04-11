@@ -26,8 +26,35 @@ jobs:
         run: nuget restore WorshipHelper.sln
 
       # -----------------------------------------------------------------------
-      # Download Vosk model (small ~50 MB, ships with the MSI for offline use)
-      # To use the large model (~1.8 GB) instead, change the URL and folder name.
+      # Discover actual DLL paths after restore and export as env vars.
+      # This avoids hardcoding paths that change between NAudio sub-package
+      # versions and avoids guessing the lib/net* folder name.
+      # -----------------------------------------------------------------------
+      - name: Resolve assembly HintPaths
+        run: |
+          $packagesDir = "$env:GITHUB_WORKSPACE\packages"
+
+          $naudioCore = Get-ChildItem "$packagesDir\NAudio.Core.*\lib" -Recurse -Filter "NAudio.Core.dll" |
+            Sort-Object { $_.FullName } | Select-Object -Last 1
+          $naudioWinMM = Get-ChildItem "$packagesDir\NAudio.WinMM.*\lib" -Recurse -Filter "NAudio.WinMM.dll" |
+            Sort-Object { $_.FullName } | Select-Object -Last 1
+          $vosk = Get-ChildItem "$packagesDir\Vosk.*\lib" -Recurse -Filter "Vosk.dll" |
+            Sort-Object { $_.FullName } | Select-Object -Last 1
+
+          if (-not $naudioCore) { throw "NAudio.Core.dll not found under $packagesDir" }
+          if (-not $naudioWinMM) { throw "NAudio.WinMM.dll not found under $packagesDir" }
+          if (-not $vosk)        { throw "Vosk.dll not found under $packagesDir" }
+
+          Write-Host "NAudio.Core  -> $($naudioCore.FullName)"
+          Write-Host "NAudio.WinMM -> $($naudioWinMM.FullName)"
+          Write-Host "Vosk         -> $($vosk.FullName)"
+
+          echo "NAUDIO_CORE_PATH=$($naudioCore.FullName)"   >> $env:GITHUB_ENV
+          echo "NAUDIO_WINMM_PATH=$($naudioWinMM.FullName)" >> $env:GITHUB_ENV
+          echo "VOSK_PATH=$($vosk.FullName)"                >> $env:GITHUB_ENV
+
+      # -----------------------------------------------------------------------
+      # Download Vosk model (small ~50 MB, bundled into MSI for offline use)
       # -----------------------------------------------------------------------
       - name: Download Vosk speech model
         run: |
@@ -41,15 +68,13 @@ jobs:
           Write-Host "Extracting..."
           Expand-Archive -Path $modelZip -DestinationPath "$env:TEMP\vosk-extracted" -Force
 
-          # The zip contains a single subfolder (e.g. vosk-model-small-en-us-0.15\).
-          # Move its contents to data\vosk-model\ so the path is predictable.
           $inner = Get-ChildItem "$env:TEMP\vosk-extracted" | Select-Object -First 1
           Move-Item -Path $inner.FullName -Destination $modelDest -Force
 
           Write-Host "Vosk model ready at: $modelDest"
 
       # -----------------------------------------------------------------------
-      # Certificate (unchanged)
+      # Certificate
       # -----------------------------------------------------------------------
       - name: Generate self-signed certificate
         run: |
@@ -93,6 +118,9 @@ jobs:
             /p:ManifestCertificateThumbprint="$env:CERT_THUMBPRINT" `
             /p:ManifestKeyFile="$env:PFX_PATH" `
             /p:ManifestCertificatePassword=build123 `
+            /p:NAudioCoreHintPath="$env:NAUDIO_CORE_PATH" `
+            /p:NAudioWinMMHintPath="$env:NAUDIO_WINMM_PATH" `
+            /p:VoskHintPath="$env:VOSK_PATH" `
             /verbosity:minimal
 
       - name: Publish VSTO (With Signing)
@@ -106,6 +134,9 @@ jobs:
             /p:ManifestCertificateThumbprint="$env:CERT_THUMBPRINT" `
             /p:ManifestKeyFile="$env:PFX_PATH" `
             /p:ManifestCertificatePassword=build123 `
+            /p:NAudioCoreHintPath="$env:NAUDIO_CORE_PATH" `
+            /p:NAudioWinMMHintPath="$env:NAUDIO_WINMM_PATH" `
+            /p:VoskHintPath="$env:VOSK_PATH" `
             /verbosity:normal
 
       - name: Remove VSTO project reference from WiX project

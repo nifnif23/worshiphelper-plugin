@@ -73,14 +73,16 @@
     <Reference Include="log4net, Version=2.0.12.0, Culture=neutral, PublicKeyToken=669e0ddf0bb1aa2a, processorArchitecture=MSIL">
       <HintPath>..\packages\log4net.2.0.12\lib\net45\log4net.dll</HintPath>
     </Reference>
+    <!-- NAudio and Vosk HintPaths are injected by the workflow after nuget restore -->
+    <!-- See: .github/workflows/main.yml "Patch assembly HintPaths" step -->
     <Reference Include="NAudio.Core">
-      <HintPath>..\packages\NAudio.Core.2.2.1\lib\netstandard2.0\NAudio.Core.dll</HintPath>
+      <HintPath>$(NAudioCoreHintPath)</HintPath>
     </Reference>
     <Reference Include="NAudio.WinMM">
-      <HintPath>..\packages\NAudio.WinMM.2.2.1\lib\net35\NAudio.WinMM.dll</HintPath>
+      <HintPath>$(NAudioWinMMHintPath)</HintPath>
     </Reference>
     <Reference Include="Vosk">
-      <HintPath>..\packages\Vosk.0.3.38\lib\netstandard2.0\Vosk.dll</HintPath>
+      <HintPath>$(VoskHintPath)</HintPath>
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.Configuration" />
