@@ -2,6 +2,7 @@
 using Microsoft.Office.Tools.Ribbon;
 using Microsoft.Office.Interop.PowerPoint;
 using Microsoft.Win32;
+using System.Linq;
 
 namespace WorshipHelperVSTO
 {
