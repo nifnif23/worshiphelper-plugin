@@ -117,21 +117,41 @@ namespace WorshipHelperVSTO
 
         private void btnToggleSpeech_Click(object sender, RibbonControlEventArgs e)
         {
-            bool isNowListening = SpeechService.Toggle();
-
-            if (isNowListening)
+            try
             {
-                btnToggleSpeech.Image = global::WorshipHelperVSTO.Properties.Resources.mic_active;
-                btnToggleSpeech.Label = "Listening...";
-            }
-            else
-            {
-                btnToggleSpeech.Image = global::WorshipHelperVSTO.Properties.Resources.mic;
-                btnToggleSpeech.Label = "Listen";
-            }
+                bool isNowListening = SpeechService.Toggle();
 
-            if (_debugPanel != null && !_debugPanel.IsDisposed)
-                _debugPanel.SetListening(isNowListening);
+                if (isNowListening)
+                {
+                    btnToggleSpeech.Image = global::WorshipHelperVSTO.Properties.Resources.mic_active;
+                    btnToggleSpeech.Label = "Listening...";
+                }
+                else
+                {
+                    btnToggleSpeech.Image = global::WorshipHelperVSTO.Properties.Resources.mic;
+                    btnToggleSpeech.Label = "Listen";
+                }
+
+                if (_debugPanel != null && !_debugPanel.IsDisposed)
+                    _debugPanel.SetListening(isNowListening);
+            }
+            catch (System.IO.DirectoryNotFoundException ex)
+            {
+                System.Windows.Forms.MessageBox.Show(
+                    ex.Message + "\n\nDownload a Vosk model from https://alphacephei.com/vosk/models " +
+                    "and extract it to the path shown above.",
+                    "Vosk Model Not Found",
+                    System.Windows.Forms.MessageBoxButtons.OK,
+                    System.Windows.Forms.MessageBoxIcon.Warning);
+            }
+            catch (System.Exception ex)
+            {
+                System.Windows.Forms.MessageBox.Show(
+                    $"Failed to start speech recognition:\n\n{ex.Message}",
+                    "Speech Error",
+                    System.Windows.Forms.MessageBoxButtons.OK,
+                    System.Windows.Forms.MessageBoxIcon.Error);
+            }
         }
         private void TestRibbonItem_Load(object sender, RibbonUIEventArgs e)
         {
