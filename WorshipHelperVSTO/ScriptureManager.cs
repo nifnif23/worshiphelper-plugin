@@ -132,8 +132,18 @@ namespace WorshipHelperVSTO
             int slideCount = verseList.Count;
             if (slideCount > 0)
             {
-                int[] slideIdxs = Enumerable.Range(insertAt, slideCount).ToArray();
-                app.ActivePresentation.Slides.Range(slideIdxs).Select();
+                try
+                {
+                    int[] slideIdxs = Enumerable.Range(insertAt, slideCount).ToArray();
+                    app.ActivePresentation.Slides.Range(slideIdxs).Select();
+                }
+                catch (Exception ex)
+                {
+                    // FIX: During live presentation, slide selection may fail with
+                    // "Slide (unknown)" errors because the selection model differs
+                    // in slideshow mode. The slides were still inserted successfully.
+                    log.Warn($"Could not select inserted slides (this is normal during live presentation): {ex.Message}");
+                }
             }
         }
 
@@ -261,9 +271,18 @@ namespace WorshipHelperVSTO
             int totalSlides = slideBatches.Count;
             if (totalSlides > 0)
             {
-                int[] slideIndexes = Enumerable.Range(startSlideIndex, totalSlides).ToArray();
-                log.Debug($"Selecting slides from {startSlideIndex} to {startSlideIndex + totalSlides - 1}");
-                app.ActivePresentation.Slides.Range(slideIndexes).Select();
+                try
+                {
+                    int[] slideIndexes = Enumerable.Range(startSlideIndex, totalSlides).ToArray();
+                    log.Debug($"Selecting slides from {startSlideIndex} to {startSlideIndex + totalSlides - 1}");
+                    app.ActivePresentation.Slides.Range(slideIndexes).Select();
+                }
+                catch (Exception ex)
+                {
+                    // FIX: During live presentation, slide selection may fail with
+                    // "Slide (unknown)" errors. The slides were still inserted successfully.
+                    log.Warn($"Could not select inserted slides (this is normal during live presentation): {ex.Message}");
+                }
             }
         }
 

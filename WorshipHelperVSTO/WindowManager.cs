@@ -1,4 +1,5 @@
 using Microsoft.Office.Interop.PowerPoint;
+using System;
 using System.Diagnostics;
 
 namespace WorshipHelperVSTO
@@ -9,36 +10,64 @@ namespace WorshipHelperVSTO
 
         public DocumentWindow GetMainWindow()
         {
-            if (app.Presentations.Count == 0)
+            try
             {
-                return null;
-            }
-
-            foreach (DocumentWindow win in app.ActivePresentation.Windows)
-            {
-                // There is probably a better way...
-                if (!win.Caption.Contains("Presenter View"))
+                if (app.Presentations.Count == 0)
                 {
-                    return win;
+                    return null;
                 }
+
+                foreach (DocumentWindow win in app.ActivePresentation.Windows)
+                {
+                    try
+                    {
+                        // There is probably a better way...
+                        if (!win.Caption.Contains("Presenter View"))
+                        {
+                            return win;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"Error reading window caption: {ex.Message}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Error enumerating windows in GetMainWindow: {ex.Message}");
             }
             return null;
         }
 
         public DocumentWindow GetPresenterView()
         {
-            if (app.Presentations.Count == 0)
+            try
             {
-                return null;
-            }
-            
-            foreach (DocumentWindow win in app.ActivePresentation.Windows)
-            {
-                // There is probably a better way...
-                if (win.Caption.Contains("Presenter View"))
+                if (app.Presentations.Count == 0)
                 {
-                    return win;
+                    return null;
                 }
+
+                foreach (DocumentWindow win in app.ActivePresentation.Windows)
+                {
+                    try
+                    {
+                        // There is probably a better way...
+                        if (win.Caption.Contains("Presenter View"))
+                        {
+                            return win;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"Error reading window caption: {ex.Message}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Error enumerating windows in GetPresenterView: {ex.Message}");
             }
             return null;
         }

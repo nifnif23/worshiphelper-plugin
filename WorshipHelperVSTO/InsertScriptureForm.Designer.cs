@@ -72,7 +72,7 @@ namespace WorshipHelperVSTO
             this.lblTitle.ForeColor = System.Drawing.Color.White;
             this.lblTitle.Location = new System.Drawing.Point(18, 13);
             this.lblTitle.Name = "lblTitle";
-            this.lblTitle.Text = "\U0001F4D6  Insert Scripture";
+            this.lblTitle.Text = "\u2702  Insert Scripture";
 
             // ---------------------------------------------------------------
             // Layout metrics
@@ -157,6 +157,7 @@ namespace WorshipHelperVSTO
             this.txtBook.TextChanged += new System.EventHandler(this.txtSearchBox_TextChanged);
             this.txtBook.KeyPress += new System.Windows.Forms.KeyPressEventHandler(this.txtSearchBox_KeyPress);
             this.txtBook.KeyDown += new System.Windows.Forms.KeyEventHandler(this.txtBook_KeyDown);
+            this.txtBook.Leave += new System.EventHandler(this.txtBook_Leave);
 
             row += rowH;
 

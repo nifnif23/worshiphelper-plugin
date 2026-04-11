@@ -29,7 +29,6 @@ namespace WorshipHelperVSTO
         private void InitializeComponent()
         {
             this.components = new System.ComponentModel.Container();
-            System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(AddContentLiveForm));
 
             // ---------------------------------------------------------------
             // Color scheme: Green / White / Gold
@@ -50,7 +49,6 @@ namespace WorshipHelperVSTO
             this.lblSubtitle = new System.Windows.Forms.Label();
             this.btnScripture = new System.Windows.Forms.Button();
             this.btnSong = new System.Windows.Forms.Button();
-            this.imageList1 = new System.Windows.Forms.ImageList(this.components);
             this.lblInfo = new System.Windows.Forms.Label();
             this.btnCancel = new System.Windows.Forms.Button();
             this.panelHeader.SuspendLayout();
@@ -67,7 +65,7 @@ namespace WorshipHelperVSTO
             this.panelHeader.TabIndex = 100;
             this.panelHeader.Controls.Add(this.lblTitle);
 
-            // lblTitle
+            // lblTitle — use BMP-safe cross character
             this.lblTitle.AutoSize = true;
             this.lblTitle.Font = new System.Drawing.Font("Segoe UI Semibold", 13F, System.Drawing.FontStyle.Bold);
             this.lblTitle.ForeColor = System.Drawing.Color.White;
@@ -97,15 +95,9 @@ namespace WorshipHelperVSTO
             row += 28;
 
             // ---------------------------------------------------------------
-            // imageList1 — icons for buttons
-            // ---------------------------------------------------------------
-            this.imageList1.ImageStream = ((System.Windows.Forms.ImageListStreamer)(resources.GetObject("imageList1.ImageStream")));
-            this.imageList1.TransparentColor = System.Drawing.Color.Transparent;
-            this.imageList1.Images.SetKeyName(0, "bible.png");
-            this.imageList1.Images.SetKeyName(1, "music-note.png");
-
-            // ---------------------------------------------------------------
-            // btnScripture — card-style button with green accent
+            // btnScripture — card-style button with icon from resources
+            // FIX: Use Properties.Resources directly instead of broken ImageList.
+            //      Replace supplementary-plane Unicode emoji with BMP-safe chars.
             // ---------------------------------------------------------------
             int btnLeftScripture = (440 - btnWidth * 2 - spacing) / 2;
             int btnLeftSong = btnLeftScripture + btnWidth + spacing;
@@ -117,22 +109,24 @@ namespace WorshipHelperVSTO
             this.btnScripture.FlatAppearance.MouseOverBackColor = hoverGreen;
             this.btnScripture.Font = new System.Drawing.Font("Segoe UI Semibold", 10F, System.Drawing.FontStyle.Bold);
             this.btnScripture.ForeColor = darkGreen;
-            this.btnScripture.ImageIndex = 0;
-            this.btnScripture.ImageList = this.imageList1;
+            // FIX: Load image directly from compiled resources (not ImageList)
+            this.btnScripture.Image = global::WorshipHelperVSTO.Properties.Resources.bible;
             this.btnScripture.ImageAlign = System.Drawing.ContentAlignment.TopCenter;
             this.btnScripture.Location = new System.Drawing.Point(btnLeftScripture, row);
             this.btnScripture.Name = "btnScripture";
             this.btnScripture.Padding = new System.Windows.Forms.Padding(0, 10, 0, 4);
             this.btnScripture.Size = new System.Drawing.Size(btnWidth, btnHeight);
             this.btnScripture.TabIndex = 0;
-            this.btnScripture.Text = "\U0001F4D6  &Scripture";
+            // FIX: Use BMP-safe text (no supplementary plane emoji)
+            this.btnScripture.Text = "&Scripture";
             this.btnScripture.TextAlign = System.Drawing.ContentAlignment.BottomCenter;
+            this.btnScripture.TextImageRelation = System.Windows.Forms.TextImageRelation.ImageAboveText;
             this.btnScripture.UseVisualStyleBackColor = false;
             this.btnScripture.Cursor = System.Windows.Forms.Cursors.Hand;
             this.btnScripture.Click += new System.EventHandler(this.btnScripture_Click);
 
             // ---------------------------------------------------------------
-            // btnSong — card-style button with green accent
+            // btnSong — card-style button with icon from resources
             // ---------------------------------------------------------------
             this.btnSong.BackColor = System.Drawing.Color.White;
             this.btnSong.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
@@ -141,16 +135,18 @@ namespace WorshipHelperVSTO
             this.btnSong.FlatAppearance.MouseOverBackColor = hoverGreen;
             this.btnSong.Font = new System.Drawing.Font("Segoe UI Semibold", 10F, System.Drawing.FontStyle.Bold);
             this.btnSong.ForeColor = darkGreen;
-            this.btnSong.ImageIndex = 1;
-            this.btnSong.ImageList = this.imageList1;
+            // FIX: Load image directly from compiled resources (not ImageList)
+            this.btnSong.Image = global::WorshipHelperVSTO.Properties.Resources.music_note;
             this.btnSong.ImageAlign = System.Drawing.ContentAlignment.TopCenter;
             this.btnSong.Location = new System.Drawing.Point(btnLeftSong, row);
             this.btnSong.Name = "btnSong";
             this.btnSong.Padding = new System.Windows.Forms.Padding(0, 10, 0, 4);
             this.btnSong.Size = new System.Drawing.Size(btnWidth, btnHeight);
             this.btnSong.TabIndex = 1;
-            this.btnSong.Text = "\U0001F3B5  Song / &Presentation";
+            // FIX: Use BMP-safe text (no supplementary plane emoji)
+            this.btnSong.Text = "Song / &Presentation";
             this.btnSong.TextAlign = System.Drawing.ContentAlignment.BottomCenter;
+            this.btnSong.TextImageRelation = System.Windows.Forms.TextImageRelation.ImageAboveText;
             this.btnSong.UseVisualStyleBackColor = false;
             this.btnSong.Cursor = System.Windows.Forms.Cursors.Hand;
             this.btnSong.Click += new System.EventHandler(this.btnSong_Click);
@@ -198,10 +194,11 @@ namespace WorshipHelperVSTO
             this.FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedDialog;
             this.MaximizeBox = false;
             this.MinimizeBox = false;
-            this.StartPosition = System.Windows.Forms.FormStartPosition.CenterParent;
+            this.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen;
             this.BackColor = System.Drawing.Color.White;
             this.Name = "AddContentLiveForm";
-            this.Text = "Add Content — WorshipHelper";
+            this.Text = "Add Content \u2014 WorshipHelper";
+            this.TopMost = true;
 
             this.Controls.Add(this.panelHeader);
             this.Controls.Add(this.lblSubtitle);
@@ -220,13 +217,14 @@ namespace WorshipHelperVSTO
 
         // ---------------------------------------------------------------
         // Field declarations
+        // FIX: Removed imageList1 — no longer needed since we load
+        //      images directly from Properties.Resources.
         // ---------------------------------------------------------------
         private System.Windows.Forms.Panel panelHeader;
         private System.Windows.Forms.Label lblTitle;
         private System.Windows.Forms.Label lblSubtitle;
         private System.Windows.Forms.Button btnScripture;
         private System.Windows.Forms.Button btnSong;
-        private System.Windows.Forms.ImageList imageList1;
         private System.Windows.Forms.Label lblInfo;
         private System.Windows.Forms.Button btnCancel;
     }

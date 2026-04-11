@@ -185,6 +185,46 @@ namespace WorshipHelperVSTO
             txtReference.Focus();
         }
 
+        /// <summary>
+        /// Auto-resolves the book name from partial input.
+        /// Called on Tab press or when txtBook loses focus.
+        /// If the suggestion box is visible, picks the selected/first suggestion.
+        /// Otherwise, attempts to resolve via FullReferenceParser.ResolveBookName.
+        /// Returns true if the book was resolved and focus should move to txtReference.
+        /// </summary>
+        private bool AutoResolveBook()
+        {
+            // If suggestion box is visible, accept the selected or first item
+            if (_suggestionBox != null && _suggestionBox.Visible && _suggestionBox.Items.Count > 0)
+            {
+                if (_suggestionBox.SelectedIndex < 0)
+                    _suggestionBox.SelectedIndex = 0;
+                AcceptSuggestion();
+                return true;
+            }
+
+            // Otherwise, try to resolve the partial text to a full book name
+            if (bible != null && !string.IsNullOrWhiteSpace(txtBook.Text))
+            {
+                var resolved = FullReferenceParser.ResolveBookName(bible, txtBook.Text);
+                if (resolved != null && !resolved.Equals(txtBook.Text, StringComparison.OrdinalIgnoreCase))
+                {
+                    _suppressSuggestions = true;
+                    txtBook.Text = resolved;
+                    txtBook.SelectionStart = txtBook.Text.Length;
+                    _suppressSuggestions = false;
+                    log.Debug($"Auto-resolved book name: '{txtBook.Text}' -> '{resolved}'");
+                }
+                else if (resolved != null)
+                {
+                    // Already exact match, just hide suggestions and move on
+                    if (_suggestionBox != null) _suggestionBox.Visible = false;
+                }
+                return resolved != null;
+            }
+            return false;
+        }
+
         private void SuggestionBox_Click(object sender, EventArgs e)
         {
             AcceptSuggestion();
@@ -203,6 +243,26 @@ namespace WorshipHelperVSTO
                 _suggestionBox.Visible = false;
                 txtBook.Focus();
             }
+        }
+
+        // -----------------------------------------------------------------------
+        // Override ProcessCmdKey to intercept Tab in txtBook BEFORE WinForms
+        // moves focus. This lets us auto-fill the book name on Tab.
+        // -----------------------------------------------------------------------
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        {
+            if (keyData == Keys.Tab && txtBook.Focused)
+            {
+                bool resolved = AutoResolveBook();
+                if (resolved)
+                {
+                    // Move focus to txtReference manually
+                    txtReference.Focus();
+                    return true; // swallow the Tab — we handled focus ourselves
+                }
+                // If we couldn't resolve, let Tab proceed normally
+            }
+            return base.ProcessCmdKey(ref msg, keyData);
         }
 
         // -----------------------------------------------------------------------
@@ -276,6 +336,30 @@ namespace WorshipHelperVSTO
         /// </summary>
         private void txtBook_KeyDown(object sender, KeyEventArgs e)
         {
+            if (e.KeyCode == Keys.Enter)
+            {
+                // If suggestions are visible, accept the first/selected one
+                if (_suggestionBox != null && _suggestionBox.Visible && _suggestionBox.Items.Count > 0)
+                {
+                    if (_suggestionBox.SelectedIndex < 0)
+                        _suggestionBox.SelectedIndex = 0;
+                    AcceptSuggestion();
+                    e.Handled = true;
+                    e.SuppressKeyPress = true;
+                    return;
+                }
+
+                // If no suggestions visible, try to auto-resolve and move to reference
+                bool resolved = AutoResolveBook();
+                if (resolved)
+                {
+                    txtReference.Focus();
+                    e.Handled = true;
+                    e.SuppressKeyPress = true;
+                }
+                return;
+            }
+
             if (_suggestionBox == null || !_suggestionBox.Visible) return;
 
             if (e.KeyCode == Keys.Down)
@@ -291,15 +375,17 @@ namespace WorshipHelperVSTO
                 _suggestionBox.Visible = false;
                 e.Handled = true;
             }
-            else if (e.KeyCode == Keys.Enter && _suggestionBox.Visible && _suggestionBox.Items.Count > 0)
-            {
-                // Accept the first suggestion if none is selected
-                if (_suggestionBox.SelectedIndex < 0)
-                    _suggestionBox.SelectedIndex = 0;
-                AcceptSuggestion();
-                e.Handled = true;
-                e.SuppressKeyPress = true; // prevent the Enter "ding"
-            }
+        }
+
+        /// <summary>
+        /// When txtBook loses focus (by any means), auto-resolve the book name.
+        /// </summary>
+        private void txtBook_Leave(object sender, EventArgs e)
+        {
+            // Small delay to avoid interfering with suggestion box click
+            if (_suggestionBox != null && _suggestionBox.Focused) return;
+
+            AutoResolveBook();
         }
 
         private bool isValidReference()
