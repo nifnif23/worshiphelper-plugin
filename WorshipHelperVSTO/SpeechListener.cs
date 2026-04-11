@@ -48,26 +48,11 @@ namespace WorshipHelperVSTO
 
         private static string ResolveModelPath()
         {
-            // VSTO shadow-copies the DLL to a temp folder, so
-            // Assembly.Location doesn't point to the install directory.
-            // Read InstallLocation from the registry instead — the MSI writes it.
-            string installDir = Microsoft.Win32.Registry.CurrentUser
-                .OpenSubKey(@"SOFTWARE\WorshipHelper")
-                ?.GetValue("InstallLocation") as string;
-
-            if (!string.IsNullOrEmpty(installDir))
-            {
-                string registryPath = Path.Combine(installDir, "data", "vosk-model");
-                if (Directory.Exists(registryPath)) return registryPath;
-            }
-
-            // Dev/debug fallback: model next to the DLL
             string dllDir = Path.GetDirectoryName(
                 System.Reflection.Assembly.GetExecutingAssembly().Location) ?? "";
             string bundled = Path.Combine(dllDir, "data", "vosk-model");
             if (Directory.Exists(bundled)) return bundled;
 
-            // Last resort: manual install in AppData
             return Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                 "WorshipHelper", "vosk-model");
@@ -135,6 +120,7 @@ namespace WorshipHelperVSTO
                     _recogniser = new VoskRecognizer(model, 16000f);
                     _recogniser.SetMaxAlternatives(0);
                     _recogniser.SetWords(true);
+                    _recogniser.SetGrammar(BuildBibleGrammar());
 
                     _waveIn = new WaveInEvent
                     {
@@ -282,7 +268,123 @@ namespace WorshipHelperVSTO
         }
 
         // -------------------------------------------------------------------------
-        // Cleanup
+        // Grammar
+        // -------------------------------------------------------------------------
+
+        /// <summary>
+        /// Builds a JSON grammar string that constrains Vosk to only the words
+        /// relevant to spoken Bible references — book names, number words, and
+        /// connector words.  This eliminates the "zechariah → zachariah night birth"
+        /// class of errors because the recogniser can no longer hallucinate arbitrary
+        /// English words.
+        ///
+        /// "[unk]" is included so that non-Bible speech produces an [unk] token
+        /// rather than a false positive.
+        /// </summary>
+        private static string BuildBibleGrammar()
+        {
+            var words = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                // ── Book name words ────────────────────────────────────────────
+                // OT
+                "genesis","gen",
+                "exodus","exod",
+                "leviticus","lev",
+                "numbers","num",
+                "deuteronomy","deut",
+                "joshua","josh",
+                "judges","judg",
+                "ruth",
+                "samuel","sam",
+                "kings","king",
+                "chronicles","chron",
+                "ezra",
+                "nehemiah","neh",
+                "esther",
+                "job",
+                "psalms","psalm","psa",
+                "proverbs","proverb","prov",
+                "ecclesiastes","eccl","eccles",
+                "song","solomon","songs",
+                "isaiah","isa",
+                "jeremiah","jer",
+                "lamentations","lam",
+                "ezekiel","ezek",
+                "daniel","dan",
+                "hosea","hos",
+                "joel",
+                "amos",
+                "obadiah","obad",
+                "jonah",
+                "micah","mic",
+                "nahum","nah",
+                "habakkuk","hab",
+                "zephaniah","zeph",
+                "haggai","hag",
+                "zechariah","zech",
+                "malachi","mal",
+                // NT
+                "matthew","matt","mat",
+                "mark",
+                "luke",
+                "john","jn",
+                "acts","act",
+                "romans","rom",
+                "corinthians","cor",
+                "galatians","gal",
+                "ephesians","eph",
+                "philippians","phil","php",
+                "colossians","col",
+                "thessalonians","thess",
+                "timothy","tim",
+                "titus","tit",
+                "philemon","phlm","philem",
+                "hebrews","heb",
+                "james","jas",
+                "peter","pet",
+                "jude",
+                "revelation","revelations","rev",
+
+                // ── Numbered-book prefixes ─────────────────────────────────────
+                "first","second","third",
+                "i","ii","iii",
+                "of",   // "song of solomon"
+
+                // ── Number words (must match SpokenNumberConverter.Cardinals) ──
+                "zero","oh","o",
+                "one","two","three","four","five",
+                "six","seven","eight","nine","ten",
+                "eleven","twelve","thirteen","fourteen","fifteen",
+                "sixteen","seventeen","eighteen","nineteen",
+                "twenty","thirty","forty","fifty",
+                "sixty","seventy","eighty","ninety",
+                "hundred",
+
+                // ── Reference connector words ──────────────────────────────────
+                "chapter","chapters",
+                "verse","verses",
+                "through","to","and","colon","dash",
+
+                // ── Common preamble / filler words ────────────────────────────
+                "read","reading","turn","turning","open","opening",
+                "look","looking","go","going","find","finding",
+                "let","lets","us","please","now","okay","ok",
+                "the","book","passage","scripture","text",
+                "today","tonight","this","morning","evening",
+                "turn","says","we're","i'm",
+
+                // ── Allow unknown words so non-Bible speech doesn't hallucinate ─
+                "[unk]",
+            };
+
+            // Vosk grammar format: ["word1","word2",...]
+            var quoted = words
+                .OrderBy(w => w)
+                .Select(w => $"\"{w.Replace("\"", "\\\"")}\"");
+            return "[" + string.Join(",", quoted) + "]";
+        }
+
+        // -------------------------------------------------------------------------
         // -------------------------------------------------------------------------
 
         private void CleanupEngine()
