@@ -178,13 +178,48 @@ jobs:
           foreach ($ref in $refs) { $ref.ParentNode.RemoveChild($ref) | Out-Null }
           $xml.Save((Resolve-Path $wixproj))
 
+      # -----------------------------------------------------------------------
+      # Harvest the vosk-model directory into a WiX fragment so the MSI
+      # bundles the model and users don't need to download it separately.
+      # -----------------------------------------------------------------------
+      - name: Harvest Vosk model into WiX fragment
+        run: |
+          $heatExe = Get-ChildItem "$env:WIX\bin" -Filter "heat.exe" | Select-Object -First 1 -ExpandProperty FullName
+          $modelDir = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\bin\Release\data\vosk-model"
+          $outFile  = "$env:GITHUB_WORKSPACE\WorshipHelperSetup\VoskModel.wxs"
+
+          & $heatExe dir $modelDir `
+            -nologo `
+            -sfrag `
+            -srd `
+            -sreg `
+            -gg `
+            -cg VoskModelFiles `
+            -dr VOSK_MODEL_DIR `
+            -var var.VoskModelDir `
+            -out $outFile
+
+          Write-Host "Generated: $outFile"
+
+          # Add VoskModel.wxs to the .wixproj so MSBuild compiles it
+          $wixproj = "WorshipHelperSetup\WorshipHelperSetup.wixproj"
+          [xml]$xml = Get-Content $wixproj
+          $ns  = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
+          $ns.AddNamespace("ms", "http://schemas.microsoft.com/developer/msbuild/2003")
+          $ig  = $xml.SelectSingleNode("//ms:ItemGroup[ms:Compile]", $ns)
+          $el  = $xml.CreateElement("Compile", "http://schemas.microsoft.com/developer/msbuild/2003")
+          $el.SetAttribute("Include", "VoskModel.wxs")
+          $ig.AppendChild($el) | Out-Null
+          $xml.Save((Resolve-Path $wixproj))
+
       - name: Build MSI
         run: |
-          $targetDir = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\bin\Release\"
+          $targetDir   = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\bin\Release\"
+          $voskModelDir = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\bin\Release\data\vosk-model\"
           msbuild WorshipHelperSetup\WorshipHelperSetup.wixproj `
             /p:Configuration=Release `
             /p:Platform=x86 `
-            /p:DefineConstants="WorshipHelperVSTO.TargetDir=$targetDir" `
+            /p:DefineConstants="WorshipHelperVSTO.TargetDir=$targetDir;VoskModelDir=$voskModelDir" `
             /verbosity:normal
 
       - name: Upload MSI artifact
