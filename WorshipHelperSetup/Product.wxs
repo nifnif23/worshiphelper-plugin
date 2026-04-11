@@ -131,6 +131,21 @@
 					  Name="NAudio.WinMM.dll"
 					  Source="$(var.WorshipHelperVSTO.TargetDir)" />
 			</Component>
+			<Component Id="libgcc_dll_Component">
+				<File Id="libgcc_dll" KeyPath="yes"
+					  Name="libgcc_s_seh-1.dll"
+					  Source="$(var.WorshipHelperVSTO.TargetDir)" />
+			</Component>
+			<Component Id="libstdcpp_dll_Component">
+				<File Id="libstdcpp_dll" KeyPath="yes"
+					  Name="libstdc++-6.dll"
+					  Source="$(var.WorshipHelperVSTO.TargetDir)" />
+			</Component>
+			<Component Id="libwinpthread_dll_Component">
+				<File Id="libwinpthread_dll" KeyPath="yes"
+					  Name="libwinpthread-1.dll"
+					  Source="$(var.WorshipHelperVSTO.TargetDir)" />
+			</Component>
 		</ComponentGroup>
 
 		<DirectoryRef Id="TEMPLATES_DIR">
