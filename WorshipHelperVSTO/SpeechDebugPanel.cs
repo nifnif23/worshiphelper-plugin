@@ -9,6 +9,7 @@
 using System;
 using System.Drawing;
 using System.Windows.Forms;
+using System.Speech.Recognition;
 
 namespace WorshipHelperVSTO
 {
@@ -113,6 +114,24 @@ namespace WorshipHelperVSTO
             };
             Controls.Add(_rtbLog);
 
+            // ── Test mic button ──────────────────────────────────────────
+            var btnTestMic = new Button
+            {
+                Text      = "Test Mic",
+                Font      = new Font("Segoe UI", 8f),
+                ForeColor = TextMain,
+                BackColor = Color.FromArgb(50, 50, 50),
+                FlatStyle = FlatStyle.Flat,
+                Size      = new Size(70, 22),
+                Anchor    = AnchorStyles.Bottom | AnchorStyles.Right,
+                Cursor    = Cursors.Hand
+            };
+            btnTestMic.FlatAppearance.BorderColor = Color.FromArgb(70, 70, 70);
+            btnTestMic.Click += (s, e) => TestMic();
+            Controls.Add(btnTestMic);
+            btnTestMic.Location = new Point(ClientSize.Width - 70 - 12 - 62 - 8, ClientSize.Height - 22 - 8);
+            Resize += (s2, e2) => btnTestMic.Location = new Point(ClientSize.Width - btnTestMic.Width - _btnClear.Width - 20, ClientSize.Height - btnTestMic.Height - 8);
+
             // ── Clear button ─────────────────────────────────────────────
             _btnClear = new Button
             {
@@ -207,6 +226,26 @@ namespace WorshipHelperVSTO
                 AutoSize  = true,
                 BackColor = Color.Transparent
             };
+        }
+
+        private void TestMic()
+        {
+            AppendLog("Testing microphone access...", TextYellow);
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                try
+                {
+                    var engine = new System.Speech.Recognition.SpeechRecognitionEngine(
+                        new System.Globalization.CultureInfo("en-US"));
+                    engine.SetInputToDefaultAudioDevice();
+                    AppendLog("✓ Mic accessible — engine created ok", TextGreen);
+                    engine.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    AppendLog($"✗ Mic error: {ex.Message}", TextRed);
+                }
+            });
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)

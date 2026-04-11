@@ -155,6 +155,12 @@ namespace WorshipHelperVSTO
         public event EventHandler<ReferenceDetectedEventArgs> OnReferenceDetected;
 
         /// <summary>
+        /// Fired for every raw phrase the speech engine hears, before reference detection.
+        /// Useful for diagnostics — lets you see what the mic is actually picking up.
+        /// </summary>
+        public event EventHandler<SpeechRecognisedEventArgs> OnRawSpeech;
+
+        /// <summary>
         /// Fired when the service status changes (started, stopped, errors).
         /// Useful for updating a status indicator in the ribbon / UI.
         /// </summary>
@@ -259,6 +265,9 @@ namespace WorshipHelperVSTO
             try
             {
                 log.Debug($"Pipeline: Received speech \"{e.Text}\" (conf={e.Confidence:F2})");
+
+                // Fire raw speech event for diagnostics
+                OnRawSpeech?.Invoke(this, e);
 
                 // Step 1: Run Bible reference detection
                 var detected = BibleReferenceDetector.DetectBest(e.Text);

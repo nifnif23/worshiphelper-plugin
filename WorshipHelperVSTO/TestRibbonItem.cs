@@ -23,6 +23,7 @@ namespace WorshipHelperVSTO
                     _speechService = new SpeechToScriptureService();
                     _speechService.OnReferenceDetected += OnReferenceDetected;
                     _speechService.OnStatusChanged     += OnSpeechStatusChanged;
+                    _speechService.OnRawSpeech         += OnRawSpeech;
                 }
                 return _speechService;
             }
@@ -94,6 +95,12 @@ namespace WorshipHelperVSTO
             {
                 log4net.LogManager.GetLogger(typeof(TestRibbonItem)).Error("Speech insert failed", ex);
             }
+        }
+
+        private void OnRawSpeech(object sender, SpeechRecognisedEventArgs e)
+        {
+            if (_debugPanel == null || _debugPanel.IsDisposed) return;
+            _debugPanel.SetHeard($"{e.Text}  (conf {e.Confidence:F2})");
         }
 
         private void OnSpeechStatusChanged(object sender, ServiceStatusEventArgs e)
