@@ -36,6 +36,7 @@ jobs:
             /p:Platform=AnyCPU `
             /p:SignManifests=true `
             /p:GenerateClickOnceManifests=false `
+            /p:ManifestCertificateThumbprint="0000000000000000000000000000000000000000" `
             /verbosity:minimal
 
       # Phase 2: Create a self-signed certificate so that the Publish step
