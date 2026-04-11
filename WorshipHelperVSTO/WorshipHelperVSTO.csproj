@@ -83,7 +83,7 @@
       <HintPath>..\packages\NAudio.2.2.1\lib\net472\NAudio.WinMM.dll</HintPath>
     </Reference>
     <Reference Include="Vosk">
-      <HintPath>..\packages\Vosk.0.3.45\lib\netstandard2.0\Vosk.dll</HintPath>
+      <HintPath>..\packages\Vosk.0.3.38\lib\netstandard2.0\Vosk.dll</HintPath>
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.Configuration" />

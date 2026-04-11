@@ -45,7 +45,7 @@ WorshipHelperVSTO\data\vosk-model\
 
 **3. Install NuGet packages** — open Package Manager Console and run:
 ```
-Install-Package Vosk -Version 0.3.45
+Install-Package Vosk -Version 0.3.38
 Install-Package NAudio -Version 2.2.1
 ```
 
