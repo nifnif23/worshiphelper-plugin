@@ -1,4 +1,4 @@
-﻿using Microsoft.Office.Interop.PowerPoint;
+using Microsoft.Office.Interop.PowerPoint;
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -91,7 +91,7 @@ namespace WorshipHelperVSTO
             ClearPresentation();
             songManager.InsertSongFromFile(TestFilePath("TestSong1.pptx"));
             await Task.Delay(DELAY);
-            
+
             scriptureManager.addScripture(template, bible, "Genesis", 1, 1, 2);
             await Task.Delay(DELAY);
 
@@ -103,7 +103,7 @@ namespace WorshipHelperVSTO
 
             new SelectionManager().GoToSlide(3);
             songManager.InsertSongFromFile(TestFilePath("TestSong2.pptx"));
-            
+
             // Now the scripture should be at the end still, displaced by Song 2
             index = 1;
             assertSongContent(index++, "Song 1 Slide 1");
@@ -122,7 +122,7 @@ namespace WorshipHelperVSTO
             {
                 Debug.WriteLine($"Slide {slideIndex} does not exist");
             }
-            
+
             try
             {
                 var slide = app.ActivePresentation.Slides.Range(slideIndex);

@@ -3,6 +3,7 @@ using Microsoft.Win32;
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
@@ -76,11 +77,63 @@ namespace WorshipHelperVSTO
             txtBook.AutoCompleteCustomSource = source;
 
             btnInsert.Enabled = false;
+
+            // Start in single-reference mode
+            SetMode(false);
         }
 
+        // -----------------------------------------------------------------------
+        // Mode switching
+        // -----------------------------------------------------------------------
+        private bool isBulkMode = false;
+
+        private void SetMode(bool bulk)
+        {
+            isBulkMode = bulk;
+
+            // Single-reference controls
+            txtBook.Visible = !bulk;
+            lblBook.Visible = !bulk;
+            txtReference.Visible = !bulk;
+            lblReference.Visible = !bulk;
+
+            // Bulk controls
+            txtBulk.Visible = bulk;
+            lblBulk.Visible = bulk;
+            lblBulkHint.Visible = bulk;
+
+            btnModeSingle.Visible = bulk;
+            btnModeBulk.Visible = !bulk;
+
+            if (bulk)
+            {
+                btnInsert.Enabled = !string.IsNullOrWhiteSpace(txtBulk.Text);
+                lblStatus.Text = "Paste full references, one per line.";
+            }
+            else
+            {
+                btnInsert.Enabled = isValidReference();
+                lblStatus.Text = "";
+            }
+        }
+
+        private void btnModeBulk_Click(object sender, EventArgs e)
+        {
+            SetMode(true);
+        }
+
+        private void btnModeSingle_Click(object sender, EventArgs e)
+        {
+            SetMode(false);
+        }
+
+        // -----------------------------------------------------------------------
+        // Validation (single mode)
+        // -----------------------------------------------------------------------
         private void txtSearchBox_TextChanged(object sender, EventArgs e)
         {
-            btnInsert.Enabled = isValidReference();
+            if (!isBulkMode)
+                btnInsert.Enabled = isValidReference();
         }
 
         private void txtSearchBox_KeyPress(object sender, KeyPressEventArgs e)
@@ -94,15 +147,19 @@ namespace WorshipHelperVSTO
             if (string.IsNullOrWhiteSpace(txtBook.Text) || bible == null)
                 return false;
 
-            var bookNames = bible.books.Select(book => book.name.ToLower()).ToList();
-            var validBook = bookNames.Contains(txtBook.Text.ToLower());
-
-            if (!validBook)
+            // Use the new resolver that handles abbreviations
+            var resolvedBook = FullReferenceParser.ResolveBookName(bible, txtBook.Text);
+            if (resolvedBook == null)
                 return false;
+
+            if (string.IsNullOrWhiteSpace(txtReference.Text))
+            {
+                // Whole book? At least need chapter. Mark as invalid.
+                return false;
+            }
 
             try
             {
-                // Use the same parser as insertion
                 ScriptureReferenceParser.Parse(txtReference.Text);
                 return true;
             }
@@ -113,43 +170,103 @@ namespace WorshipHelperVSTO
             }
         }
 
+        // -----------------------------------------------------------------------
+        // Bulk text changed
+        // -----------------------------------------------------------------------
+        private void txtBulk_TextChanged(object sender, EventArgs e)
+        {
+            if (isBulkMode)
+            {
+                btnInsert.Enabled = !string.IsNullOrWhiteSpace(txtBulk.Text);
+
+                // Count parseable lines
+                var lines = SplitBulkInput(txtBulk.Text);
+                int valid = 0;
+                foreach (var line in lines)
+                {
+                    var parsed = FullReferenceParser.ParseFullReference(bible, line);
+                    if (parsed != null)
+                    {
+                        try
+                        {
+                            ScriptureReferenceParser.Parse(parsed.Value.Reference);
+                            valid++;
+                        }
+                        catch { /* skip invalid */ }
+                    }
+                }
+                lblStatus.Text = $"{valid} of {lines.Count} reference(s) recognised.";
+                lblStatus.ForeColor = valid == lines.Count ? Color.DarkGreen : Color.DarkGoldenrod;
+            }
+        }
+
+        /// <summary>
+        /// Splits bulk input text into individual reference strings.
+        /// Supports newlines, semicolons, and pipe as delimiters.
+        /// Filters out blanks.
+        /// </summary>
+        private List<string> SplitBulkInput(string input)
+        {
+            if (string.IsNullOrWhiteSpace(input))
+                return new List<string>();
+
+            // Split on newlines, semicolons, or pipe
+            var parts = Regex.Split(input, @"[\r\n;|]+");
+            return parts
+                .Select(p => p.Trim())
+                .Where(p => p.Length > 0)
+                .ToList();
+        }
+
+        // -----------------------------------------------------------------------
+        // Insert
+        // -----------------------------------------------------------------------
         private void btnInsert_Click(object sender, EventArgs e)
         {
             log.Info("About to insert scripture");
 
-            var book = bible.books
-                .First(b => b.name.Equals(txtBook.Text, StringComparison.OrdinalIgnoreCase));
+            try
+            {
+                if (isBulkMode)
+                {
+                    InsertBulk();
+                }
+                else
+                {
+                    InsertSingle();
+                }
+            }
+            catch (Exception ex)
+            {
+                log.Error("Error inserting scripture", ex);
+                MessageBox.Show($"Error inserting scripture:\n\n{ex.Message}",
+                    "Insert Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
 
-            // Parse reference using the universal parser
+            log.Debug("Closing scripture window");
+            this.Close();
+        }
+
+        private void InsertSingle()
+        {
+            // Resolve book name (handles abbreviations)
+            var resolvedName = FullReferenceParser.ResolveBookName(bible, txtBook.Text);
+            if (resolvedName == null)
+                throw new Exception($"Could not resolve book name: {txtBook.Text}");
+
+            var book = bible.books.First(b => b.name.Equals(resolvedName, StringComparison.OrdinalIgnoreCase));
+
             var parsed = ScriptureReferenceParser.Parse(txtReference.Text);
 
             log.Debug($"Parsed reference: chapter={parsed.Chapter}, ranges={string.Join(";", parsed.Ranges.Select(r => $"{r.Start}-{r.End}"))}");
 
-            var chapter = book.chapters
-                .First(c => c.number == parsed.Chapter);
-
-            // Ensure verses are sorted numerically
-            var verses = chapter.verses
-                .OrderBy(v => v.number)
-                .ToList();
-
+            var chapter = book.chapters.First(c => c.number == parsed.Chapter);
+            var verses = chapter.verses.OrderBy(v => v.number).ToList();
             int maxVerse = verses.Last().number;
 
             // Expand all ranges into a flat list of verse numbers
-            var verseNumbers = new List<int>();
-
-            foreach (var range in parsed.Ranges)
-            {
-                int s = Math.Max(1, range.Start);
-                int e = range.End == int.MaxValue ? maxVerse : range.End;
-                e = Math.Min(maxVerse, e);
-
-                for (int v = s; v <= e; v++)
-                    verseNumbers.Add(v);
-            }
-
-            // Remove duplicates and sort
-            verseNumbers = verseNumbers.Distinct().OrderBy(v => v).ToList();
+            var verseNumbers = ExpandRanges(parsed.Ranges, maxVerse);
 
             if (!verseNumbers.Any())
             {
@@ -160,29 +277,115 @@ namespace WorshipHelperVSTO
 
             log.Debug($"Final verse list: {string.Join(",", verseNumbers)}");
 
-            try
-            {
-                new ScriptureManager().addScripture(
-                    cmbTemplate.SelectedItem as ScriptureTemplate,
-                    bible,
-                    book.name,
-                    parsed.Chapter,
-                    verseNumbers.First(),
-                    verseNumbers.Last(),
-                    chkMultiVerse.Checked);
+            new ScriptureManager().addScripture(
+                cmbTemplate.SelectedItem as ScriptureTemplate,
+                bible,
+                book.name,
+                parsed.Chapter,
+                verseNumbers,
+                chkMultiVerse.Checked);
+        }
 
-                log.Debug("Insert complete");
-            }
-            finally
+        private void InsertBulk()
+        {
+            var lines = SplitBulkInput(txtBulk.Text);
+            int inserted = 0;
+            var errors = new List<string>();
+
+            foreach (var line in lines)
             {
-                log.Debug("Closing scripture window");
-                this.Close();
+                try
+                {
+                    var fullParsed = FullReferenceParser.ParseFullReference(bible, line);
+                    if (fullParsed == null)
+                    {
+                        errors.Add($"Cannot parse: \"{line}\"");
+                        continue;
+                    }
+
+                    var (bookName, refPart) = fullParsed.Value;
+                    var book = bible.books.First(b => b.name.Equals(bookName, StringComparison.OrdinalIgnoreCase));
+
+                    List<int> verseNumbers;
+                    int chapterNum;
+
+                    if (string.IsNullOrWhiteSpace(refPart))
+                    {
+                        // Whole book? We'll just do chapter 1 (user needs to be more specific)
+                        errors.Add($"No chapter specified for: \"{line}\"");
+                        continue;
+                    }
+
+                    var parsed = ScriptureReferenceParser.Parse(refPart);
+                    chapterNum = parsed.Chapter;
+
+                    var chapter = book.chapters.FirstOrDefault(c => c.number == chapterNum);
+                    if (chapter == null)
+                    {
+                        errors.Add($"Chapter {chapterNum} not found in {bookName}: \"{line}\"");
+                        continue;
+                    }
+
+                    int maxVerse = chapter.verses.OrderBy(v => v.number).Last().number;
+                    verseNumbers = ExpandRanges(parsed.Ranges, maxVerse);
+
+                    if (!verseNumbers.Any())
+                    {
+                        errors.Add($"No valid verses for: \"{line}\"");
+                        continue;
+                    }
+
+                    new ScriptureManager().addScripture(
+                        cmbTemplate.SelectedItem as ScriptureTemplate,
+                        bible,
+                        book.name,
+                        chapterNum,
+                        verseNumbers,
+                        chkMultiVerse.Checked);
+
+                    inserted++;
+                }
+                catch (Exception ex)
+                {
+                    errors.Add($"\"{line}\": {ex.Message}");
+                }
+            }
+
+            if (errors.Any())
+            {
+                string msg = $"Inserted {inserted} reference(s).\n\n" +
+                             $"The following could not be processed:\n" +
+                             string.Join("\n", errors.Select(e => "• " + e));
+                MessageBox.Show(msg, "Bulk Insert Results", MessageBoxButtons.OK,
+                    errors.Count == lines.Count ? MessageBoxIcon.Error : MessageBoxIcon.Warning);
             }
         }
 
+        /// <summary>
+        /// Expands parsed ranges into a flat, sorted, deduplicated list of verse numbers.
+        /// </summary>
+        private List<int> ExpandRanges(List<(int Start, int End)> ranges, int maxVerse)
+        {
+            var verseNumbers = new List<int>();
+            foreach (var range in ranges)
+            {
+                int s = Math.Max(1, range.Start);
+                int end = range.End == int.MaxValue ? maxVerse : range.End;
+                end = Math.Min(maxVerse, end);
+
+                for (int v = s; v <= end; v++)
+                    verseNumbers.Add(v);
+            }
+            return verseNumbers.Distinct().OrderBy(v => v).ToList();
+        }
+
+        // -----------------------------------------------------------------------
+        // Other event handlers
+        // -----------------------------------------------------------------------
         private void txtReference_TextChanged(object sender, EventArgs e)
         {
-            btnInsert.Enabled = isValidReference();
+            if (!isBulkMode)
+                btnInsert.Enabled = isValidReference();
         }
 
         private void btnCancel_Click(object sender, EventArgs e)
@@ -197,6 +400,11 @@ namespace WorshipHelperVSTO
             log.Info($"Selecting translation: {translationName}");
 
             bible = OpenSongBibleReader.LoadTranslation(translationName);
+
+            // Refresh autocomplete
+            var source = new AutoCompleteStringCollection();
+            source.AddRange(bible.books.Select(book => book.name).ToArray());
+            txtBook.AutoCompleteCustomSource = source;
 
             var registryKey = Registry.CurrentUser.CreateSubKey(@"SOFTWARE\WorshipHelper");
             registryKey.SetValue("LastBibleTranslation", translationName);
@@ -236,14 +444,32 @@ namespace WorshipHelperVSTO
         }
     }
 
+    // -----------------------------------------------------------------------
+    //  ParsedReference + ScriptureReferenceParser
+    //  (chapter : verse reference parser — book name handled separately)
+    // -----------------------------------------------------------------------
     public class ParsedReference
     {
         public int Chapter { get; set; }
-        public List<(int Start, int End)> Ranges { get; set; } = new();
+        public List<(int Start, int End)> Ranges { get; set; } = new List<(int, int)>();
     }
 
     public static class ScriptureReferenceParser
     {
+        /// <summary>
+        /// Parses a chapter:verse reference string (without the book name).
+        /// Supports many common formats:
+        ///   "3"              → whole chapter 3
+        ///   "3:"             → whole chapter 3
+        ///   "3:16"           → chapter 3, verse 16
+        ///   "3:16-18"        → chapter 3, verses 16–18
+        ///   "3:16,17,18"     → chapter 3, verses 16, 17, 18
+        ///   "3:16-18,20"     → chapter 3, verses 16–18 and 20
+        ///   "3v16"  / "3V16" → treated as "3:16"
+        ///   "3.16"           → treated as "3:16"
+        ///   En-dash / em-dash are normalised to hyphen.
+        ///   Spaces are stripped.
+        /// </summary>
         public static ParsedReference Parse(string input)
         {
             if (string.IsNullOrWhiteSpace(input))
@@ -251,19 +477,22 @@ namespace WorshipHelperVSTO
 
             // Normalize input
             input = input
-                .Replace("–", "-")   // en-dash
-                .Replace("—", "-")   // em-dash
-                .Replace(" ", "")    // remove all spaces
-                .Replace("v", ":")   // support "3v16"
-                .Replace("V", ":");
+                .Replace("\u2013", "-")   // en-dash
+                .Replace("\u2014", "-")   // em-dash
+                .Replace(" ", "")         // remove all spaces
+                .Replace("v", ":")        // support "3v16"
+                .Replace("V", ":")
+                .Replace(".", ":");       // support "3.16"
 
-            // Now formats like "3v16-18" become "3:16-18"
+            // Collapse repeated colons that may result from normalisation (e.g. "3..16" → "3::16")
+            while (input.Contains("::"))
+                input = input.Replace("::", ":");
 
             var result = new ParsedReference();
 
             var parts = input.Split(':');
 
-            if (!int.TryParse(parts[0], out int chapter))
+            if (!int.TryParse(parts[0], out int chapter) || chapter <= 0)
                 throw new FormatException("Invalid chapter in reference.");
 
             result.Chapter = chapter;
@@ -275,14 +504,12 @@ namespace WorshipHelperVSTO
                 return result;
             }
 
-            if (parts.Length > 2)
-                throw new FormatException("Too many ':' or 'v' separators in reference.");
-
-            var versePart = parts[1];
+            // Join everything after the first colon (handles pathological "3:16:17" → "16:17" → "16,17")
+            var versePart = string.Join(",", parts.Skip(1));
 
             if (string.IsNullOrWhiteSpace(versePart))
             {
-                // Treat as whole chapter
+                // "3:" → whole chapter
                 result.Ranges.Add((1, int.MaxValue));
                 return result;
             }
