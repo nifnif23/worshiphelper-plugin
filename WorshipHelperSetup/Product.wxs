@@ -11,6 +11,7 @@
 
 		<Feature Id="ProductFeature" Title="WorshipHelper" Level="1">
 			<ComponentGroupRef Id="ProductComponents" />
+			<ComponentGroupRef Id="VoskModelFiles" />
 			<ComponentRef Id="Registry_FriendlyName" />
 			<ComponentRef Id="Registry_Description" />
 			<ComponentRef Id="Registry_Manifest" />
@@ -39,7 +40,8 @@
 		<Directory Id="TARGETDIR" Name="SourceDir">
 			<Directory Id="ProgramFilesFolder">
 				<Directory Id="INSTALLFOLDER" Name="WorshipHelper">
-					<Directory Id="DATA_DIR" Name="Data">
+					<Directory Id="DATA_DIR" Name="data">
+						<Directory Id="VOSK_MODEL_DIR" Name="vosk-model" />
 						<Directory Id="TEMPLATES_DIR" Name="Templates" />
 						<Directory Id="BIBLES_DIR" Name="Bibles" />
 					</Directory>
