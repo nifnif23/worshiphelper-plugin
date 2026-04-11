@@ -1,0 +1,105 @@
+name: Build WorshipHelper MSI
+
+on:
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true 
+
+jobs:
+  build:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Set WiX environment variable
+        run: |
+          $wixPath = (Get-ChildItem "C:\Program Files (x86)" -Filter "WiX Toolset*" | Select-Object -First 1).FullName
+          echo "WIX=$wixPath" >> $env:GITHUB_ENV
+
+      - name: Restore NuGet packages
+        run: nuget restore WorshipHelper.sln
+
+      # PHASE 1: Generate the certificate BEFORE building.
+      # This puts the certificate in the actual Windows Store of the runner.
+      - name: Generate self-signed certificate
+        run: |
+          $cert = New-SelfSignedCertificate `
+            -Subject "CN=WorshipHelper" `
+            -CertStoreLocation "Cert:\CurrentUser\My" `
+            -KeyExportPolicy Exportable `
+            -KeySpec Signature `
+            -KeyUsage DigitalSignature `
+            -Type CodeSigningCert `
+            -NotAfter (Get-Date).AddYears(5)
+          $pwd = ConvertTo-SecureString -String "build123" -Force -AsPlainText
+          $pfxPath = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\ci-cert.pfx"
+          Export-PfxCertificate -Cert $cert -FilePath $pfxPath -Password $pwd | Out-Null
+          
+          # Import to LocalMachine so MSBuild sub-processes can find it
+          $store = New-Object System.Security.Cryptography.X509Certificates.X509Store("My", "LocalMachine")
+          $store.Open("ReadWrite")
+          $store.Add($cert)
+          $store.Close()
+
+          echo "CERT_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+          echo "PFX_PATH=$pfxPath" >> $env:GITHUB_ENV
+
+      # PHASE 2: Build the VSTO using the REAL thumbprint generated above.
+      # We still disable ClickOnce manifest generation here just to keep the build fast.
+      - name: Build VSTO (Release)
+        run: |
+          msbuild WorshipHelperVSTO\WorshipHelperVSTO.csproj `
+            /p:Configuration=Release `
+            /p:Platform=AnyCPU `
+            /p:SignManifests=true `
+            /p:GenerateClickOnceManifests=false `
+            /p:ManifestCertificateThumbprint="$env:CERT_THUMBPRINT" `
+            /p:ManifestKeyFile="$env:PFX_PATH" `
+            /p:ManifestCertificatePassword=build123 `
+            /verbosity:minimal
+
+      # PHASE 3: Publish with signing (creates the .vsto manifest for the MSI).
+      - name: Publish VSTO (With Signing)
+        run: |
+          msbuild WorshipHelperVSTO\WorshipHelperVSTO.csproj `
+            /target:Publish `
+            /p:Configuration=Release `
+            /p:Platform=AnyCPU `
+            /p:PublishDir="${{ github.workspace }}\WorshipHelperVSTO\publish\" `
+            /p:SignManifests=true `
+            /p:ManifestCertificateThumbprint="$env:CERT_THUMBPRINT" `
+            /p:ManifestKeyFile="$env:PFX_PATH" `
+            /p:ManifestCertificatePassword=build123 `
+            /verbosity:normal
+
+      # (Steps for Removing Project Reference and Building MSI remain the same)
+      - name: Remove VSTO project reference from WiX project
+        run: |
+          $wixproj = "WorshipHelperSetup\WorshipHelperSetup.wixproj"
+          [xml]$xml = Get-Content $wixproj
+          $ns = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
+          $ns.AddNamespace("ms", "http://schemas.microsoft.com/developer/msbuild/2003")
+          $refs = $xml.SelectNodes("//ms:ProjectReference", $ns)
+          foreach ($ref in $refs) { $ref.ParentNode.RemoveChild($ref) | Out-Null }
+          $xml.Save((Resolve-Path $wixproj))
+
+      - name: Build MSI
+        run: |
+          $targetDir = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\bin\Release\"
+          msbuild WorshipHelperSetup\WorshipHelperSetup.wixproj `
+            /p:Configuration=Release `
+            /p:Platform=x86 `
+            /p:DefineConstants="WorshipHelperVSTO.TargetDir=$targetDir" `
+            /verbosity:normal
+
+      - name: Upload MSI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WorshipHelperSetup
+          path: WorshipHelperSetup\bin\Release\**\WorshipHelperSetup.msi
