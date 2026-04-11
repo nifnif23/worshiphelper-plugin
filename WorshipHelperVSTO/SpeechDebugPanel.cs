@@ -9,7 +9,6 @@
 using System;
 using System.Drawing;
 using System.Windows.Forms;
-using System.Speech.Recognition;
 
 namespace WorshipHelperVSTO
 {
@@ -235,11 +234,15 @@ namespace WorshipHelperVSTO
             {
                 try
                 {
-                    var engine = new System.Speech.Recognition.SpeechRecognitionEngine(
-                        new System.Globalization.CultureInfo("en-US"));
-                    engine.SetInputToDefaultAudioDevice();
-                    AppendLog("✓ Mic accessible — engine created ok", TextGreen);
-                    engine.Dispose();
+                    // Use NAudio to verify mic access (System.Speech no longer used)
+                    int deviceCount = NAudio.Wave.WaveInEvent.DeviceCount;
+                    if (deviceCount == 0)
+                    {
+                        AppendLog("✗ No recording devices found", TextRed);
+                        return;
+                    }
+                    var caps = NAudio.Wave.WaveInEvent.GetCapabilities(0);
+                    AppendLog($"✓ Mic accessible — {deviceCount} device(s), default: \"{caps.ProductName}\"", TextGreen);
                 }
                 catch (Exception ex)
                 {
