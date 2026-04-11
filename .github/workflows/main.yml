@@ -50,6 +50,17 @@ jobs:
           echo "CERT_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
           echo "PFX_PATH=$pfxPath" >> $env:GITHUB_ENV
 
+      - name: Stamp build version
+        run: |
+          $runNumber = $env:GITHUB_RUN_NUMBER
+          $versionLine = "[assembly: AssemblyFileVersion(`"1.4.0.$runNumber`")]"
+          $path = "WorshipHelperVSTO\Properties\AssemblyInfo.cs"
+          $content = Get-Content $path -Raw
+          # Remove any existing AssemblyFileVersion line then append new one
+          $content = $content -replace '(?m)^.*AssemblyFileVersion.*\r?\n', ''
+          $content = $content.TrimEnd() + "`r`n$versionLine`r`n"
+          Set-Content $path $content -NoNewline
+
       # PHASE 2: Build the VSTO using the REAL thumbprint generated above.
       # We still disable ClickOnce manifest generation here just to keep the build fast.
       - name: Build VSTO (Release)

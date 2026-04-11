@@ -359,13 +359,13 @@ namespace WorshipHelperVSTO
         private static (string chapter, string verse) SplitChapterVerse(string spokenFragment)
         {
             var tokens = Tokenise(spokenFragment);
-            if (tokens.Count == 0) return (null, null);
+            if (tokens.Count == 0) return ((string)null, (string)null);
 
             // Single token → chapter only
             if (tokens.Count == 1)
             {
                 int? val = WordsToNumber(tokens[0]);
-                return val.HasValue ? (val.Value.ToString(), null) : (null, null);
+                return val.HasValue ? (val.Value.ToString(), (string)null) : ((string)null, (string)null);
             }
 
             // Try each split point from left to right
@@ -393,7 +393,7 @@ namespace WorshipHelperVSTO
 
             // No valid split found — treat the whole thing as chapter-only
             int? wholeNum = WordsToNumber(spokenFragment);
-            return wholeNum.HasValue ? (wholeNum.Value.ToString(), null) : (null, null);
+            return wholeNum.HasValue ? (wholeNum.Value.ToString(), (string)null) : ((string)null, (string)null);
         }
     }
 }
