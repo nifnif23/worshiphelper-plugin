@@ -34,7 +34,7 @@ jobs:
           msbuild WorshipHelperVSTO\WorshipHelperVSTO.csproj `
             /p:Configuration=Release `
             /p:Platform=AnyCPU `
-            /p:SignManifests=false `
+            /p:SignManifests=true `
             /p:GenerateClickOnceManifests=false `
             /verbosity:minimal
 
