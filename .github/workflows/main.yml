@@ -123,6 +123,30 @@ jobs:
             /p:VoskHintPath="$env:VOSK_PATH" `
             /verbosity:minimal
 
+      # -----------------------------------------------------------------------
+      # Copy NuGet runtime DLLs into bin\Release so the MSI can bundle them.
+      # Vosk ships two pieces: Vosk.dll (managed) and libvosk.dll (native C).
+      # NAudio ships as separate sub-packages. None are auto-copied by MSBuild
+      # because they're referenced via HintPath rather than normal NuGet imports.
+      # -----------------------------------------------------------------------
+      - name: Copy NuGet DLLs to bin\Release
+        run: |
+          $targetDir  = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\bin\Release"
+          $packagesDir = "$env:GITHUB_WORKSPACE\packages"
+
+          # Managed wrappers (already resolved in earlier step)
+          Copy-Item $env:VOSK_PATH        $targetDir -Force
+          Copy-Item $env:NAUDIO_CORE_PATH $targetDir -Force
+          Copy-Item $env:NAUDIO_WINMM_PATH $targetDir -Force
+
+          # libvosk.dll — native C library that Vosk.dll P/Invokes into.
+          # NuGet places it under runtimes/win/native/ or runtimes/win-x86/native/
+          $libvosk = Get-ChildItem "$packagesDir\Vosk.*\runtimes" -Recurse -Filter "libvosk.dll" |
+            Select-Object -First 1
+          if (-not $libvosk) { throw "libvosk.dll not found in NuGet packages" }
+          Write-Host "libvosk.dll -> $($libvosk.FullName)"
+          Copy-Item $libvosk.FullName $targetDir -Force
+
       - name: Publish VSTO (With Signing)
         run: |
           msbuild WorshipHelperVSTO\WorshipHelperVSTO.csproj `
