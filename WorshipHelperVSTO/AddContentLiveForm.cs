@@ -13,8 +13,14 @@ namespace WorshipHelperVSTO
 
         private void btnScripture_Click(object sender, EventArgs e)
         {
-            new InsertScriptureForm().ShowDialog();
-            Close();
+            // Open the scripture form as a dialog; this form stays open behind it.
+            // When the scripture form closes (after insert or cancel), we close too.
+            using (var scriptureForm = new InsertScriptureForm())
+            {
+                scriptureForm.ShowDialog(this);
+            }
+            this.DialogResult = DialogResult.OK;
+            this.Close();
         }
 
         private void btnSong_Click(object sender, EventArgs e)
@@ -26,12 +32,14 @@ namespace WorshipHelperVSTO
             {
                 presenterView.Activate();
             }
-            Close();
+            this.DialogResult = DialogResult.OK;
+            this.Close();
         }
 
         private void btnCancel_Click(object sender, EventArgs e)
         {
-            Close();
+            this.DialogResult = DialogResult.Cancel;
+            this.Close();
         }
     }
 }

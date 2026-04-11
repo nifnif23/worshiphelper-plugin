@@ -42,7 +42,12 @@ namespace WorshipHelperVSTO
 
         private void btnInsertScripture_Click(object sender, RibbonControlEventArgs e)
         {
-            new InsertScriptureForm().Show();
+            // FIX: Use ShowDialog() so the form is modal and properly disposed after closing.
+            // Previously used Show() which could cause issues with multiple forms open.
+            using (var form = new InsertScriptureForm())
+            {
+                form.ShowDialog();
+            }
         }
 
         private void btnInsertOneClick_Click(object sender, RibbonControlEventArgs e)

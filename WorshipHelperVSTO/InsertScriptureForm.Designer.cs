@@ -18,6 +18,19 @@ namespace WorshipHelperVSTO
         private void InitializeComponent()
         {
             // ---------------------------------------------------------------
+            // Color scheme: Green / White / Gold
+            // ---------------------------------------------------------------
+            var accentGreen = System.Drawing.Color.FromArgb(46, 125, 50);
+            var darkGreen   = System.Drawing.Color.FromArgb(27, 94, 32);
+            var lightGreen  = System.Drawing.Color.FromArgb(232, 245, 233);
+            var hoverGreen  = System.Drawing.Color.FromArgb(200, 230, 201);
+            var gold        = System.Drawing.Color.FromArgb(184, 134, 11);
+            var textDark    = System.Drawing.Color.FromArgb(33, 33, 33);
+            var textMuted   = System.Drawing.Color.FromArgb(117, 117, 117);
+            var borderLight = System.Drawing.Color.FromArgb(200, 200, 200);
+            var fieldBg     = System.Drawing.Color.White;
+
+            // ---------------------------------------------------------------
             // Control declarations
             // ---------------------------------------------------------------
             this.lblTemplate = new System.Windows.Forms.Label();
@@ -43,38 +56,39 @@ namespace WorshipHelperVSTO
             this.SuspendLayout();
 
             // ---------------------------------------------------------------
-            // panelHeader — colored banner at the top
+            // panelHeader — green banner at the top
             // ---------------------------------------------------------------
-            this.panelHeader.BackColor = System.Drawing.Color.FromArgb(55, 71, 133);
+            this.panelHeader.BackColor = accentGreen;
             this.panelHeader.Dock = System.Windows.Forms.DockStyle.Top;
             this.panelHeader.Location = new System.Drawing.Point(0, 0);
             this.panelHeader.Name = "panelHeader";
-            this.panelHeader.Size = new System.Drawing.Size(520, 48);
+            this.panelHeader.Size = new System.Drawing.Size(490, 52);
             this.panelHeader.TabIndex = 100;
             this.panelHeader.Controls.Add(this.lblTitle);
 
             // lblTitle
             this.lblTitle.AutoSize = true;
-            this.lblTitle.Font = new System.Drawing.Font("Segoe UI Semibold", 14F, System.Drawing.FontStyle.Bold);
+            this.lblTitle.Font = new System.Drawing.Font("Segoe UI Semibold", 13F, System.Drawing.FontStyle.Bold);
             this.lblTitle.ForeColor = System.Drawing.Color.White;
-            this.lblTitle.Location = new System.Drawing.Point(16, 10);
+            this.lblTitle.Location = new System.Drawing.Point(18, 13);
             this.lblTitle.Name = "lblTitle";
-            this.lblTitle.Text = "\u2702  Insert Scripture";
+            this.lblTitle.Text = "\U0001F4D6  Insert Scripture";
 
             // ---------------------------------------------------------------
             // Layout metrics
             // ---------------------------------------------------------------
-            int leftLabel = 20;
-            int leftCtrl = 120;
-            int ctrlWidth = 370;
-            int row = 64;
-            int rowH = 34;
+            int leftLabel = 22;
+            int leftCtrl = 118;
+            int ctrlWidth = 340;
+            int row = 68;
+            int rowH = 36;
 
             // ---------------------------------------------------------------
             // Row 1: Template
             // ---------------------------------------------------------------
             this.lblTemplate.AutoSize = true;
             this.lblTemplate.Font = new System.Drawing.Font("Segoe UI", 9F);
+            this.lblTemplate.ForeColor = textDark;
             this.lblTemplate.Location = new System.Drawing.Point(leftLabel, row + 3);
             this.lblTemplate.Name = "lblTemplate";
             this.lblTemplate.Text = "Template:";
@@ -86,6 +100,7 @@ namespace WorshipHelperVSTO
             this.cmbTemplate.Name = "cmbTemplate";
             this.cmbTemplate.Size = new System.Drawing.Size(ctrlWidth, 25);
             this.cmbTemplate.TabIndex = 0;
+            this.cmbTemplate.BackColor = fieldBg;
             this.cmbTemplate.SelectionChangeCommitted += new System.EventHandler(this.cmbTemplate_SelectionChangeCommitted);
 
             row += rowH;
@@ -95,6 +110,7 @@ namespace WorshipHelperVSTO
             // ---------------------------------------------------------------
             this.lblTranslation.AutoSize = true;
             this.lblTranslation.Font = new System.Drawing.Font("Segoe UI", 9F);
+            this.lblTranslation.ForeColor = textDark;
             this.lblTranslation.Location = new System.Drawing.Point(leftLabel, row + 3);
             this.lblTranslation.Name = "lblTranslation";
             this.lblTranslation.Text = "Translation:";
@@ -106,15 +122,27 @@ namespace WorshipHelperVSTO
             this.cmbTranslation.Name = "cmbTranslation";
             this.cmbTranslation.Size = new System.Drawing.Size(ctrlWidth, 25);
             this.cmbTranslation.TabIndex = 1;
+            this.cmbTranslation.BackColor = fieldBg;
             this.cmbTranslation.SelectionChangeCommitted += new System.EventHandler(this.cmbTranslation_SelectionChangeCommitted);
 
-            row += rowH + 6;
+            row += rowH + 8;
+
+            // ---------------------------------------------------------------
+            // Separator line
+            // ---------------------------------------------------------------
+            var separator = new System.Windows.Forms.Panel();
+            separator.BackColor = System.Drawing.Color.FromArgb(224, 224, 224);
+            separator.Location = new System.Drawing.Point(leftLabel, row - 4);
+            separator.Size = new System.Drawing.Size(ctrlWidth + leftCtrl - leftLabel, 1);
+
+            row += 4;
 
             // ---------------------------------------------------------------
             // Row 3: Book (single mode)
             // ---------------------------------------------------------------
             this.lblBook.AutoSize = true;
             this.lblBook.Font = new System.Drawing.Font("Segoe UI", 9F);
+            this.lblBook.ForeColor = textDark;
             this.lblBook.Location = new System.Drawing.Point(leftLabel, row + 3);
             this.lblBook.Name = "lblBook";
             this.lblBook.Text = "Book:";
@@ -124,6 +152,8 @@ namespace WorshipHelperVSTO
             this.txtBook.Name = "txtBook";
             this.txtBook.Size = new System.Drawing.Size(ctrlWidth, 26);
             this.txtBook.TabIndex = 2;
+            this.txtBook.BackColor = fieldBg;
+            this.txtBook.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle;
             this.txtBook.TextChanged += new System.EventHandler(this.txtSearchBox_TextChanged);
             this.txtBook.KeyPress += new System.Windows.Forms.KeyPressEventHandler(this.txtSearchBox_KeyPress);
             this.txtBook.KeyDown += new System.Windows.Forms.KeyEventHandler(this.txtBook_KeyDown);
@@ -135,6 +165,7 @@ namespace WorshipHelperVSTO
             // ---------------------------------------------------------------
             this.lblReference.AutoSize = true;
             this.lblReference.Font = new System.Drawing.Font("Segoe UI", 9F);
+            this.lblReference.ForeColor = textDark;
             this.lblReference.Location = new System.Drawing.Point(leftLabel, row + 3);
             this.lblReference.Name = "lblReference";
             this.lblReference.Text = "Reference:";
@@ -144,6 +175,8 @@ namespace WorshipHelperVSTO
             this.txtReference.Name = "txtReference";
             this.txtReference.Size = new System.Drawing.Size(ctrlWidth, 26);
             this.txtReference.TabIndex = 3;
+            this.txtReference.BackColor = fieldBg;
+            this.txtReference.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle;
             this.txtReference.TextChanged += new System.EventHandler(this.txtReference_TextChanged);
 
             // ---------------------------------------------------------------
@@ -153,6 +186,7 @@ namespace WorshipHelperVSTO
 
             this.lblBulk.AutoSize = true;
             this.lblBulk.Font = new System.Drawing.Font("Segoe UI", 9F);
+            this.lblBulk.ForeColor = textDark;
             this.lblBulk.Location = new System.Drawing.Point(leftLabel, bulkTop + 3);
             this.lblBulk.Name = "lblBulk";
             this.lblBulk.Text = "References:";
@@ -167,11 +201,13 @@ namespace WorshipHelperVSTO
             this.txtBulk.Size = new System.Drawing.Size(ctrlWidth, 62);
             this.txtBulk.TabIndex = 4;
             this.txtBulk.Visible = false;
+            this.txtBulk.BackColor = fieldBg;
+            this.txtBulk.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle;
             this.txtBulk.TextChanged += new System.EventHandler(this.txtBulk_TextChanged);
 
             this.lblBulkHint.AutoSize = true;
             this.lblBulkHint.Font = new System.Drawing.Font("Segoe UI", 7.5F, System.Drawing.FontStyle.Italic);
-            this.lblBulkHint.ForeColor = System.Drawing.Color.Gray;
+            this.lblBulkHint.ForeColor = textMuted;
             this.lblBulkHint.Location = new System.Drawing.Point(leftCtrl, bulkTop + 65);
             this.lblBulkHint.Name = "lblBulkHint";
             this.lblBulkHint.Text = "e.g.  John 3:16-18;  Romans 8:28;  Ps 23:1-6   (one per line or separated by ; )";
@@ -184,11 +220,12 @@ namespace WorshipHelperVSTO
             // ---------------------------------------------------------------
             this.chkMultiVerse.AutoSize = true;
             this.chkMultiVerse.Font = new System.Drawing.Font("Segoe UI", 9F);
+            this.chkMultiVerse.ForeColor = textDark;
             this.chkMultiVerse.Location = new System.Drawing.Point(leftCtrl, row);
             this.chkMultiVerse.Name = "chkMultiVerse";
             this.chkMultiVerse.Size = new System.Drawing.Size(250, 20);
             this.chkMultiVerse.TabIndex = 5;
-            this.chkMultiVerse.Text = "Pack multiple verses per slide (multi-verse)";
+            this.chkMultiVerse.Text = "Pack multiple verses per slide";
             this.chkMultiVerse.UseVisualStyleBackColor = true;
             this.chkMultiVerse.CheckedChanged += new System.EventHandler(this.chkMultiVerse_CheckedChanged);
 
@@ -199,11 +236,13 @@ namespace WorshipHelperVSTO
             // ---------------------------------------------------------------
             this.btnModeBulk.Font = new System.Drawing.Font("Segoe UI", 8F);
             this.btnModeBulk.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
-            this.btnModeBulk.ForeColor = System.Drawing.Color.FromArgb(55, 71, 133);
-            this.btnModeBulk.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(55, 71, 133);
+            this.btnModeBulk.ForeColor = accentGreen;
+            this.btnModeBulk.FlatAppearance.BorderColor = accentGreen;
+            this.btnModeBulk.FlatAppearance.BorderSize = 1;
+            this.btnModeBulk.FlatAppearance.MouseOverBackColor = lightGreen;
             this.btnModeBulk.Location = new System.Drawing.Point(leftCtrl, row);
             this.btnModeBulk.Name = "btnModeBulk";
-            this.btnModeBulk.Size = new System.Drawing.Size(160, 28);
+            this.btnModeBulk.Size = new System.Drawing.Size(155, 26);
             this.btnModeBulk.TabIndex = 6;
             this.btnModeBulk.Text = "\u2b07  Switch to Bulk Paste";
             this.btnModeBulk.UseVisualStyleBackColor = true;
@@ -212,11 +251,13 @@ namespace WorshipHelperVSTO
 
             this.btnModeSingle.Font = new System.Drawing.Font("Segoe UI", 8F);
             this.btnModeSingle.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
-            this.btnModeSingle.ForeColor = System.Drawing.Color.FromArgb(55, 71, 133);
-            this.btnModeSingle.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(55, 71, 133);
+            this.btnModeSingle.ForeColor = accentGreen;
+            this.btnModeSingle.FlatAppearance.BorderColor = accentGreen;
+            this.btnModeSingle.FlatAppearance.BorderSize = 1;
+            this.btnModeSingle.FlatAppearance.MouseOverBackColor = lightGreen;
             this.btnModeSingle.Location = new System.Drawing.Point(leftCtrl, row);
             this.btnModeSingle.Name = "btnModeSingle";
-            this.btnModeSingle.Size = new System.Drawing.Size(160, 28);
+            this.btnModeSingle.Size = new System.Drawing.Size(155, 26);
             this.btnModeSingle.TabIndex = 7;
             this.btnModeSingle.Text = "\u2b06  Switch to Single Entry";
             this.btnModeSingle.UseVisualStyleBackColor = true;
@@ -224,14 +265,14 @@ namespace WorshipHelperVSTO
             this.btnModeSingle.Visible = false;
             this.btnModeSingle.Click += new System.EventHandler(this.btnModeSingle_Click);
 
-            row += rowH + 2;
+            row += rowH;
 
             // ---------------------------------------------------------------
             // Row 7: Status label
             // ---------------------------------------------------------------
             this.lblStatus.AutoSize = true;
             this.lblStatus.Font = new System.Drawing.Font("Segoe UI", 8F, System.Drawing.FontStyle.Italic);
-            this.lblStatus.ForeColor = System.Drawing.Color.Gray;
+            this.lblStatus.ForeColor = textMuted;
             this.lblStatus.Location = new System.Drawing.Point(leftCtrl, row);
             this.lblStatus.Name = "lblStatus";
             this.lblStatus.Text = "";
@@ -242,26 +283,28 @@ namespace WorshipHelperVSTO
             // Row 8: Buttons
             // ---------------------------------------------------------------
             this.btnInsert.Font = new System.Drawing.Font("Segoe UI Semibold", 9.5F, System.Drawing.FontStyle.Bold);
-            this.btnInsert.BackColor = System.Drawing.Color.FromArgb(55, 71, 133);
+            this.btnInsert.BackColor = accentGreen;
             this.btnInsert.ForeColor = System.Drawing.Color.White;
             this.btnInsert.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
             this.btnInsert.FlatAppearance.BorderSize = 0;
+            this.btnInsert.FlatAppearance.MouseOverBackColor = darkGreen;
             this.btnInsert.Location = new System.Drawing.Point(leftCtrl, row);
             this.btnInsert.Name = "btnInsert";
-            this.btnInsert.Size = new System.Drawing.Size(130, 34);
+            this.btnInsert.Size = new System.Drawing.Size(120, 34);
             this.btnInsert.TabIndex = 8;
-            this.btnInsert.Text = "Insert";
+            this.btnInsert.Text = "\u2714  Insert";
             this.btnInsert.UseVisualStyleBackColor = false;
             this.btnInsert.Cursor = System.Windows.Forms.Cursors.Hand;
             this.btnInsert.Click += new System.EventHandler(this.btnInsert_Click);
 
             this.btnCancel.DialogResult = System.Windows.Forms.DialogResult.Cancel;
-            this.btnCancel.Font = new System.Drawing.Font("Segoe UI", 9.5F);
+            this.btnCancel.Font = new System.Drawing.Font("Segoe UI", 9F);
             this.btnCancel.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
-            this.btnCancel.FlatAppearance.BorderColor = System.Drawing.Color.Silver;
-            this.btnCancel.Location = new System.Drawing.Point(leftCtrl + 140, row);
+            this.btnCancel.FlatAppearance.BorderColor = borderLight;
+            this.btnCancel.ForeColor = textMuted;
+            this.btnCancel.Location = new System.Drawing.Point(leftCtrl + 130, row);
             this.btnCancel.Name = "btnCancel";
-            this.btnCancel.Size = new System.Drawing.Size(110, 34);
+            this.btnCancel.Size = new System.Drawing.Size(100, 34);
             this.btnCancel.TabIndex = 9;
             this.btnCancel.Text = "Close";
             this.btnCancel.UseVisualStyleBackColor = true;
@@ -276,7 +319,7 @@ namespace WorshipHelperVSTO
             this.AutoScaleDimensions = new System.Drawing.SizeF(7F, 15F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.CancelButton = this.btnCancel;
-            this.ClientSize = new System.Drawing.Size(520, row + 10);
+            this.ClientSize = new System.Drawing.Size(490, row + 10);
             this.Font = new System.Drawing.Font("Segoe UI", 9F);
             this.FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedDialog;
             this.MaximizeBox = false;
@@ -284,9 +327,10 @@ namespace WorshipHelperVSTO
             this.StartPosition = System.Windows.Forms.FormStartPosition.CenterParent;
             this.BackColor = System.Drawing.Color.White;
             this.Name = "InsertScriptureForm";
-            this.Text = "Insert Scripture — WorshipHelper";
+            this.Text = "Insert Scripture \u2014 WorshipHelper";
 
             this.Controls.Add(this.panelHeader);
+            this.Controls.Add(separator);
             this.Controls.Add(this.lblTemplate);
             this.Controls.Add(this.cmbTemplate);
             this.Controls.Add(this.lblTranslation);

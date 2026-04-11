@@ -24,6 +24,13 @@ namespace WorshipHelperVSTO
         private ListBox _suggestionBox;
         private bool _suppressSuggestions = false;
 
+        // Color scheme constants
+        private static readonly Color AccentGreen = Color.FromArgb(46, 125, 50);
+        private static readonly Color DarkGreen = Color.FromArgb(27, 94, 32);
+        private static readonly Color LightGreen = Color.FromArgb(232, 245, 233);
+        private static readonly Color SuccessGreen = Color.FromArgb(56, 142, 60);
+        private static readonly Color Gold = Color.FromArgb(184, 134, 11);
+
         public InsertScriptureForm()
         {
             log.Info("Loading InsertScriptureForm");
@@ -101,6 +108,8 @@ namespace WorshipHelperVSTO
             _suggestionBox.IntegralHeight = false; // allow partial-item height
             _suggestionBox.BorderStyle = BorderStyle.FixedSingle;
             _suggestionBox.Cursor = Cursors.Hand;
+            _suggestionBox.BackColor = Color.White;
+            _suggestionBox.ForeColor = Color.FromArgb(33, 33, 33);
 
             // Position it directly below txtBook
             PositionSuggestionBox();
@@ -157,6 +166,7 @@ namespace WorshipHelperVSTO
             int visibleItems = Math.Min(suggestions.Count, 8);
             _suggestionBox.Height = visibleItems * _suggestionBox.ItemHeight + 4;
 
+            PositionSuggestionBox();
             _suggestionBox.Visible = true;
             _suggestionBox.BringToFront();
         }
@@ -226,6 +236,7 @@ namespace WorshipHelperVSTO
             {
                 btnInsert.Enabled = !string.IsNullOrWhiteSpace(txtBulk.Text);
                 lblStatus.Text = "Paste full references, one per line.";
+                lblStatus.ForeColor = Color.FromArgb(117, 117, 117);
             }
             else
             {
@@ -347,7 +358,7 @@ namespace WorshipHelperVSTO
                     }
                 }
                 lblStatus.Text = $"{valid} of {lines.Count} reference(s) recognised.";
-                lblStatus.ForeColor = valid == lines.Count ? Color.DarkGreen : Color.DarkGoldenrod;
+                lblStatus.ForeColor = valid == lines.Count ? SuccessGreen : Gold;
             }
         }
 
@@ -403,20 +414,11 @@ namespace WorshipHelperVSTO
                 return;
             }
 
-            // Success — clear fields for next insert instead of closing,
-            // so the user can insert multiple scriptures in a row.
-            log.Debug("Scripture inserted successfully; clearing fields for next entry");
-            if (isBulkMode)
-            {
-                txtBulk.Clear();
-            }
-            else
-            {
-                txtReference.Clear();
-            }
-            btnInsert.Enabled = false;
-            lblStatus.Text = "\u2714 Inserted successfully!";
-            lblStatus.ForeColor = Color.DarkGreen;
+            // FIX: Close the form after successful insert instead of leaving it open.
+            // The previous behaviour left it open which confused users.
+            log.Debug("Scripture inserted successfully; closing form.");
+            this.DialogResult = DialogResult.OK;
+            this.Close();
         }
 
         private void InsertSingle()
@@ -526,7 +528,7 @@ namespace WorshipHelperVSTO
             {
                 string msg = $"Inserted {inserted} reference(s).\n\n" +
                              $"The following could not be processed:\n" +
-                             string.Join("\n", errors.Select(e => "• " + e));
+                             string.Join("\n", errors.Select(e => "\u2022 " + e));
                 MessageBox.Show(msg, "Bulk Insert Results", MessageBoxButtons.OK,
                     errors.Count == lines.Count ? MessageBoxIcon.Error : MessageBoxIcon.Warning);
             }
@@ -561,6 +563,7 @@ namespace WorshipHelperVSTO
 
         private void btnCancel_Click(object sender, EventArgs e)
         {
+            this.DialogResult = DialogResult.Cancel;
             this.Close();
         }
 

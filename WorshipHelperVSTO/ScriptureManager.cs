@@ -14,15 +14,10 @@ namespace WorshipHelperVSTO
         // -----------------------------------------------------------------------
         // Tuning constants
         // -----------------------------------------------------------------------
-        // Reduced from 400 → 340 so multi-verse slides have more breathing room.
         int maxHeight = 340;
 
         // The minimum font size we will shrink to before giving up.
         const float MIN_FONT_SIZE = 8f;
-
-        // When distributing verses evenly we allow a small slack on the target so
-        // that the last slide isn't left with a single lonely verse.
-        const double EVEN_DISTRIBUTE_SLACK = 0.25;
 
         // -----------------------------------------------------------------------
         // Public API
@@ -143,7 +138,11 @@ namespace WorshipHelperVSTO
         }
 
         // -----------------------------------------------------------------------
-        // MODE B: Multi-verse projection — EVEN DISTRIBUTION
+        // MODE B: Multi-verse projection — GREEDY PACKING (simple & reliable)
+        // -----------------------------------------------------------------------
+        // FIX: Removed the broken "even distribution" pass that was causing
+        // slide duplication errors and index corruption. Now uses a single
+        // greedy pass: pack as many verses as will fit on each slide.
         // -----------------------------------------------------------------------
         private void addScriptureMultiVerse(ScriptureTemplate template, Chapter chapter,
                                             List<Verse> verseList, string referenceLabel,
@@ -151,7 +150,6 @@ namespace WorshipHelperVSTO
         {
             Application app = Globals.ThisAddIn.Application;
 
-            // ---- Pass 1: greedy packing to determine how many slides are needed ----
             Presentation templatePresentation = app.Presentations.Open(template.path, msoTrue, msoFalse, msoFalse);
             var templateSlide = templatePresentation.Slides[1];
             var color1 = templateSlide.Shapes[2].TextFrame.TextRange.Font.Color.RGB;
@@ -160,7 +158,11 @@ namespace WorshipHelperVSTO
 
             int insertAt = new SelectionManager().GetNextSlideIndex();
 
-            // Create a temporary "measuring" slide to probe heights
+            // ---- Single greedy pass: pack verses into slides ----
+            var slideBatches = new List<List<Verse>>();
+            var currentBatch = new List<Verse>();
+
+            // Create one measuring slide to probe text heights
             var measuringSlide = newSlideFromTemplate(templatePresentation, insertAt);
             measuringSlide.Shapes[2].TextFrame.TextRange.Font.Color.RGB = color1;
             measuringSlide.Shapes[3].TextFrame.TextRange.Font.Color.RGB = color2;
@@ -168,22 +170,21 @@ namespace WorshipHelperVSTO
             measureBox.TextFrame.TextRange.Font.Size = originalFontSize;
             measureBox.TextFrame.TextRange.Text = "";
 
-            // Greedy pass: figure out how verses split across slides
-            var greedySplit = new List<List<Verse>>();
-            var currentBatch = new List<Verse>();
             string runningText = "";
 
             foreach (var verse in verseList)
             {
                 string verseText = "\u00AB" + verse.number + "\u00BB " + verse.text + " ";
                 string candidateText = runningText + verseText;
+                
+                measureBox.TextFrame.TextRange.Font.Size = originalFontSize;
                 measureBox.TextFrame.TextRange.Text = candidateText;
                 ForceLayoutRefresh(measureBox);
 
                 if (measureBox.Height > maxHeight && runningText.Length > 0)
                 {
                     // Overflow — commit current batch and start fresh
-                    greedySplit.Add(new List<Verse>(currentBatch));
+                    slideBatches.Add(new List<Verse>(currentBatch));
                     currentBatch.Clear();
                     runningText = "";
 
@@ -209,39 +210,21 @@ namespace WorshipHelperVSTO
                 }
             }
             if (currentBatch.Any())
-                greedySplit.Add(currentBatch);
+                slideBatches.Add(currentBatch);
 
             // Delete the temporary measuring slide
             measuringSlide.Delete();
 
-            int numSlidesNeeded = greedySplit.Count;
+            log.Debug($"Greedy packing: {slideBatches.Count} slide(s) for {verseList.Count} verse(s). " +
+                      $"Distribution: {string.Join(", ", slideBatches.Select(g => g.Count))}");
 
-            // ---- Pass 2: even distribution ----
-            // Distribute verseList into numSlidesNeeded groups as evenly as possible.
-            var evenSplit = DistributeEvenly(verseList, numSlidesNeeded);
-
-            log.Debug($"Greedy needs {numSlidesNeeded} slides. Even distribution: {string.Join(", ", evenSplit.Select(g => g.Count))}");
-
-            // ---- Pass 3: create actual slides ----
+            // ---- Create actual slides from greedy batches ----
             var startSlideIndex = insertAt;
-            var createdSlides = new List<Slide>();
 
-            for (int s = 0; s < evenSplit.Count; s++)
+            for (int s = 0; s < slideBatches.Count; s++)
             {
-                Slide slide;
-                if (s == 0)
-                {
-                    slide = newSlideFromTemplate(templatePresentation, insertAt + s);
-                }
-                else
-                {
-                    // Duplicate from the first created slide for consistent formatting
-                    slide = createdSlides[0].Duplicate()[1];
-                    // Move it to the correct position
-                    slide.MoveTo(insertAt + s);
-                }
-
-                createdSlides.Add(slide);
+                // Always create from template to avoid Duplicate() index issues
+                var slide = newSlideFromTemplate(templatePresentation, insertAt + s);
 
                 slide.Shapes[2].TextFrame.TextRange.Font.Color.RGB = color1;
                 slide.Shapes[3].TextFrame.TextRange.Font.Color.RGB = color2;
@@ -254,7 +237,7 @@ namespace WorshipHelperVSTO
 
                 // Build the text for this slide
                 string slideText = "";
-                foreach (var verse in evenSplit[s])
+                foreach (var verse in slideBatches[s])
                 {
                     slideText += "\u00AB" + verse.number + "\u00BB " + verse.text + " ";
                 }
@@ -269,45 +252,24 @@ namespace WorshipHelperVSTO
                 }
 
                 // Apply superscript formatting to verse number markers
-                ApplySuperscriptMarkers(objBodyTextBox, evenSplit[s]);
+                ApplySuperscriptMarkers(objBodyTextBox, slideBatches[s]);
             }
 
             templatePresentation.Close();
 
             // Select all newly inserted slides
-            int endSlideIndex = startSlideIndex + createdSlides.Count - 1;
-            int[] slideIndexes = Enumerable.Range(startSlideIndex, createdSlides.Count).ToArray();
-            log.Debug($"Selecting slides from {startSlideIndex} to {endSlideIndex}");
-            app.ActivePresentation.Slides.Range(slideIndexes).Select();
+            int totalSlides = slideBatches.Count;
+            if (totalSlides > 0)
+            {
+                int[] slideIndexes = Enumerable.Range(startSlideIndex, totalSlides).ToArray();
+                log.Debug($"Selecting slides from {startSlideIndex} to {startSlideIndex + totalSlides - 1}");
+                app.ActivePresentation.Slides.Range(slideIndexes).Select();
+            }
         }
 
         // -----------------------------------------------------------------------
         // Helpers
         // -----------------------------------------------------------------------
-
-        /// <summary>
-        /// Distributes a list of items into <paramref name="groupCount"/> groups
-        /// as evenly as possible, preserving order.
-        /// </summary>
-        private List<List<T>> DistributeEvenly<T>(List<T> items, int groupCount)
-        {
-            if (groupCount <= 0) groupCount = 1;
-            if (groupCount > items.Count) groupCount = items.Count;
-
-            var result = new List<List<T>>();
-            int total = items.Count;
-            int baseSize = total / groupCount;
-            int remainder = total % groupCount;
-
-            int idx = 0;
-            for (int g = 0; g < groupCount; g++)
-            {
-                int size = baseSize + (g < remainder ? 1 : 0);
-                result.Add(items.GetRange(idx, size));
-                idx += size;
-            }
-            return result;
-        }
 
         /// <summary>
         /// Uses guillemet markers «N» to format verse numbers as superscript,

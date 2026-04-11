@@ -18,7 +18,6 @@ namespace WorshipHelperVSTO
         private SafeNativeMethods.HookProc _keyboardProc;
 
         private IntPtr _hookIdKeyboard;
-        private AddContentLiveForm addContentLiveForm = new AddContentLiveForm();
 
         private void ThisAddIn_Startup(object sender, EventArgs e)
         {
@@ -79,9 +78,14 @@ namespace WorshipHelperVSTO
                         log.Debug($"Key pressed while presenting: {wParam} ({keyPressed})");
                         if (keyPressed == 17) // Ctrl key - our only choices are Ctrl, Shift and Caps Lock if we don't want to unblank a blanked slide as a side effect
                         {
-                            // Insert song or scripture
+                            // BUG FIX: Create a new form instance each time instead of reusing
+                            // a singleton. Previously, calling Close() disposed the form, so
+                            // showing it again would throw ObjectDisposedException.
                             log.Debug("Opening Add Content Live form");
-                            addContentLiveForm.ShowDialog();
+                            using (var addContentLiveForm = new AddContentLiveForm())
+                            {
+                                addContentLiveForm.ShowDialog();
+                            }
                         }
                     }
                 }
