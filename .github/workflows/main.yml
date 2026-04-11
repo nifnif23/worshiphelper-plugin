@@ -140,12 +140,17 @@ jobs:
           Copy-Item $env:NAUDIO_WINMM_PATH $targetDir -Force
 
           # libvosk.dll — native C library that Vosk.dll P/Invokes into.
-          # NuGet places it under runtimes/win/native/ or runtimes/win-x86/native/
-          $libvosk = Get-ChildItem "$packagesDir\Vosk.*\runtimes" -Recurse -Filter "libvosk.dll" |
-            Select-Object -First 1
-          if (-not $libvosk) { throw "libvosk.dll not found in NuGet packages" }
-          Write-Host "libvosk.dll -> $($libvosk.FullName)"
-          Copy-Item $libvosk.FullName $targetDir -Force
+          # The Vosk packages.config NuGet package bundles it in lib\ alongside Vosk.dll.
+          $voskDir = Split-Path $env:VOSK_PATH -Parent
+          $libvosk = Join-Path $voskDir "libvosk.dll"
+          if (-not (Test-Path $libvosk)) {
+            # Fallback: scan the whole Vosk package directory
+            $libvosk = Get-ChildItem "$packagesDir\Vosk.*" -Recurse -Filter "libvosk.dll" |
+              Select-Object -ExpandProperty FullName -First 1
+          }
+          if (-not $libvosk) { throw "libvosk.dll not found in NuGet packages - check Vosk package structure" }
+          Write-Host "libvosk.dll -> $libvosk"
+          Copy-Item $libvosk $targetDir -Force
 
       - name: Publish VSTO (With Signing)
         run: |
