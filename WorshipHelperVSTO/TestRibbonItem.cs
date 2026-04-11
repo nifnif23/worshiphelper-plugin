@@ -10,6 +10,7 @@ namespace WorshipHelperVSTO
     {
         private SpeechToScriptureService _speechService;
         private System.Windows.Forms.Control _uiThreadMarshaller;
+        private SpeechDebugPanel _debugPanel;
 
         private SpeechToScriptureService SpeechService
         {
@@ -17,13 +18,23 @@ namespace WorshipHelperVSTO
             {
                 if (_speechService == null)
                 {
-                    // Create a hidden WinForms control on the UI thread to marshal callbacks
                     _uiThreadMarshaller = new System.Windows.Forms.Control();
                     _uiThreadMarshaller.CreateControl();
                     _speechService = new SpeechToScriptureService();
                     _speechService.OnReferenceDetected += OnReferenceDetected;
+                    _speechService.OnStatusChanged     += OnSpeechStatusChanged;
                 }
                 return _speechService;
+            }
+        }
+
+        private SpeechDebugPanel DebugPanel
+        {
+            get
+            {
+                if (_debugPanel == null || _debugPanel.IsDisposed)
+                    _debugPanel = new SpeechDebugPanel();
+                return _debugPanel;
             }
         }
 
@@ -35,6 +46,9 @@ namespace WorshipHelperVSTO
             {
                 try
                 {
+                    if (_debugPanel != null && !_debugPanel.IsDisposed)
+                        _debugPanel.SetDetected(e.NormalisedReference);
+
                     using (var toast = new SpeechConfirmForm(e.NormalisedReference))
                     {
                         toast.ShowDialog();
@@ -82,6 +96,18 @@ namespace WorshipHelperVSTO
             }
         }
 
+        private void OnSpeechStatusChanged(object sender, ServiceStatusEventArgs e)
+        {
+            if (_debugPanel == null || _debugPanel.IsDisposed) return;
+            _debugPanel.SetStatus(e.Message, e.IsError);
+        }
+
+        private void btnMonitorSpeech_Click(object sender, RibbonControlEventArgs e)
+        {
+            DebugPanel.Show();
+            DebugPanel.BringToFront();
+        }
+
         private void btnToggleSpeech_Click(object sender, RibbonControlEventArgs e)
         {
             bool isNowListening = SpeechService.Toggle();
@@ -96,6 +122,9 @@ namespace WorshipHelperVSTO
                 btnToggleSpeech.Image = global::WorshipHelperVSTO.Properties.Resources.mic;
                 btnToggleSpeech.Label = "Listen";
             }
+
+            if (_debugPanel != null && !_debugPanel.IsDisposed)
+                _debugPanel.SetListening(isNowListening);
         }
         private void TestRibbonItem_Load(object sender, RibbonUIEventArgs e)
         {

@@ -79,6 +79,7 @@ namespace WorshipHelperVSTO
             this.btnAddFavourite = this.Factory.CreateRibbonButton();
             this.grpSpeech = this.Factory.CreateRibbonGroup();
             this.btnToggleSpeech = this.Factory.CreateRibbonToggleButton();
+            this.btnMonitorSpeech = this.Factory.CreateRibbonButton();
             this.grpDebug = this.Factory.CreateRibbonGroup();
             this.btnSelfTest = this.Factory.CreateRibbonButton();
             this.tab1.SuspendLayout();
@@ -139,6 +140,7 @@ namespace WorshipHelperVSTO
             // grpSpeech
             // 
             this.grpSpeech.Items.Add(this.btnToggleSpeech);
+            this.grpSpeech.Items.Add(this.btnMonitorSpeech);
             this.grpSpeech.Label = "Speech";
             this.grpSpeech.Name = "grpSpeech";
             // 
@@ -150,6 +152,14 @@ namespace WorshipHelperVSTO
             this.btnToggleSpeech.Name = "btnToggleSpeech";
             this.btnToggleSpeech.ShowImage = true;
             this.btnToggleSpeech.Click += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.btnToggleSpeech_Click);
+            // 
+            // btnMonitorSpeech
+            // 
+            this.btnMonitorSpeech.ControlSize = Microsoft.Office.Core.RibbonControlSize.RibbonControlSizeRegular;
+            this.btnMonitorSpeech.Label = "Monitor";
+            this.btnMonitorSpeech.Name = "btnMonitorSpeech";
+            this.btnMonitorSpeech.ShowImage = false;
+            this.btnMonitorSpeech.Click += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.btnMonitorSpeech_Click);
             // 
             // grpDebug
             // 
@@ -191,6 +201,7 @@ namespace WorshipHelperVSTO
         internal Microsoft.Office.Tools.Ribbon.RibbonButton btnAddFavourite;
         internal Microsoft.Office.Tools.Ribbon.RibbonGroup grpSpeech;
         internal Microsoft.Office.Tools.Ribbon.RibbonToggleButton btnToggleSpeech;
+        internal Microsoft.Office.Tools.Ribbon.RibbonButton btnMonitorSpeech;
         internal RibbonGroup grpDebug;
         internal RibbonButton btnSelfTest;
     }

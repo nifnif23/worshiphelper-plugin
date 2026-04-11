@@ -122,6 +122,7 @@
     <Compile Include="SpokenNumberConverter.cs" />
     <Compile Include="ThisAddIn_SpeechIntegration.cs" />
     <Compile Include="SpeechConfirmForm.cs" />
+    <Compile Include="SpeechDebugPanel.cs" />
     
     <EmbeddedResource Include="AddContentLiveForm.resx"><DependentUpon>AddContentLiveForm.cs</DependentUpon></EmbeddedResource>
     <EmbeddedResource Include="InsertScriptureForm.resx"><DependentUpon>InsertScriptureForm.cs</DependentUpon></EmbeddedResource>
