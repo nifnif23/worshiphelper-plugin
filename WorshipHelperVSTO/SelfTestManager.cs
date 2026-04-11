@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace WorshipHelperVSTO
 {
-    class SelfTestManager
+    public class SelfTestManager
     {
         Application app = Globals.ThisAddIn.Application;
         private readonly ScriptureManager scriptureManager = new ScriptureManager();

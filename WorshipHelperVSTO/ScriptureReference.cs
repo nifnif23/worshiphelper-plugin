@@ -5,18 +5,18 @@ using System.Text.RegularExpressions;
 
 namespace WorshipHelperVSTO
 {
-    class ScriptureReference
+    public class ScriptureReference
     {
-        String bookName;
-        int chapterNum;
-        int verseNumStart;
-        int verseNumEnd;
+        public string bookName;
+        public int chapterNum;
+        public int verseNumStart;
+        public int verseNumEnd;
 
-        public static ScriptureReference parse(Bible bible, String bookName, String reference)
+        public static ScriptureReference parse(Bible bible, string bookName, string reference)
         {
             var scriptureReference = new ScriptureReference();
 
-            var book = bible.books.Find(bookItem => bookItem.name.ToLower() == bookName.ToLower());
+            var book = bible.books.Find(bookItem => bookItem.name.Equals(bookName, StringComparison.OrdinalIgnoreCase));
             if (book == null) throw new Exception("Book does not exist");
 
             var referenceParts = reference.Split(new char[] { ':', '-' });
@@ -132,10 +132,47 @@ namespace WorshipHelperVSTO
             {"rev","Revelation"},{"re","Revelation"},{"rv","Revelation"},{"apocalypse","Revelation"},
         };
 
+        // -----------------------------------------------------------------------
+        // Popularity scores for Bible books.
+        // Higher = more commonly referenced in worship / study contexts.
+        // Used by ResolveBookName to prefer popular matches and by the
+        // suggestion dropdown to rank results.
+        // -----------------------------------------------------------------------
+        public static readonly Dictionary<string, int> BookPopularity = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+        {
+            // Tier 1 — most frequently referenced (score 3)
+            {"Genesis",3},{"Psalms",3},{"Proverbs",3},{"Isaiah",3},
+            {"Matthew",3},{"Mark",3},{"Luke",3},{"John",3},
+            {"Acts",3},{"Romans",3},{"1 Corinthians",3},{"Ephesians",3},
+            {"Philippians",3},{"Hebrews",3},{"James",3},{"Revelation",3},
+
+            // Tier 2 — frequently referenced (score 2)
+            {"Exodus",2},{"Deuteronomy",2},{"Joshua",2},
+            {"1 Samuel",2},{"2 Samuel",2},{"1 Kings",2},{"2 Kings",2},
+            {"Job",2},{"Ecclesiastes",2},{"Jeremiah",2},{"Daniel",2},
+            {"Galatians",2},{"Colossians",2},{"1 Thessalonians",2},
+            {"1 Timothy",2},{"2 Timothy",2},{"1 Peter",2},{"1 John",2},
+            {"2 Corinthians",2},
+
+            // Tier 3 — everything else defaults to 1 (handled in GetPopularity)
+        };
+
+        /// <summary>
+        /// Returns the popularity score for a book (3 = most popular, 1 = least).
+        /// </summary>
+        public static int GetPopularity(string bookName)
+        {
+            if (string.IsNullOrEmpty(bookName)) return 0;
+            return BookPopularity.TryGetValue(bookName, out int score) ? score : 1;
+        }
+
         /// <summary>
         /// Resolves a user-typed book name (which may be an abbreviation,
         /// partial match, or exact canonical name) to the canonical book
         /// name used in the loaded Bible data.
+        ///
+        /// When multiple books match a prefix or contains search, the most
+        /// popular one is preferred (e.g. "Jo" → "John" rather than "Job").
         /// </summary>
         public static string ResolveBookName(Bible bible, string input)
         {
@@ -154,15 +191,77 @@ namespace WorshipHelperVSTO
                 if (found != null) return found.name;
             }
 
-            // 3) StartsWith match (e.g. "Gene" → "Genesis")
-            var startsWith = bible.books.FirstOrDefault(b => b.name.StartsWith(trimmed, StringComparison.OrdinalIgnoreCase));
-            if (startsWith != null) return startsWith.name;
+            // 3) StartsWith match — prefer most popular when multiple match
+            var startsWithMatches = bible.books
+                .Where(b => b.name.StartsWith(trimmed, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (startsWithMatches.Any())
+            {
+                return startsWithMatches
+                    .OrderByDescending(b => GetPopularity(b.name))
+                    .ThenBy(b => b.name, StringComparer.OrdinalIgnoreCase)
+                    .First().name;
+            }
 
-            // 4) Contains match (e.g. "Solomon" → "Song of Solomon")
-            var contains = bible.books.FirstOrDefault(b => b.name.IndexOf(trimmed, StringComparison.OrdinalIgnoreCase) >= 0);
-            if (contains != null) return contains.name;
+            // 4) Contains match — prefer most popular when multiple match
+            var containsMatches = bible.books
+                .Where(b => b.name.IndexOf(trimmed, StringComparison.OrdinalIgnoreCase) >= 0)
+                .ToList();
+            if (containsMatches.Any())
+            {
+                return containsMatches
+                    .OrderByDescending(b => GetPopularity(b.name))
+                    .ThenBy(b => b.name, StringComparer.OrdinalIgnoreCase)
+                    .First().name;
+            }
 
             return null;
+        }
+
+        /// <summary>
+        /// Returns all book names from the loaded Bible that match the given
+        /// input prefix, sorted by popularity (descending) then alphabetically.
+        /// Used by the custom suggestion dropdown.
+        /// </summary>
+        public static List<string> GetSuggestions(Bible bible, string input)
+        {
+            if (bible == null || string.IsNullOrWhiteSpace(input))
+                return new List<string>();
+
+            string trimmed = input.Trim();
+
+            // Gather matches: StartsWith first, then Contains (but not StartsWith)
+            var startsWith = bible.books
+                .Where(b => b.name.StartsWith(trimmed, StringComparison.OrdinalIgnoreCase))
+                .Select(b => b.name)
+                .ToList();
+
+            var contains = bible.books
+                .Where(b => !b.name.StartsWith(trimmed, StringComparison.OrdinalIgnoreCase)
+                         && b.name.IndexOf(trimmed, StringComparison.OrdinalIgnoreCase) >= 0)
+                .Select(b => b.name)
+                .ToList();
+
+            // Also check abbreviations that start with the input
+            var abbrMatches = Abbreviations
+                .Where(kvp => kvp.Key.StartsWith(trimmed, StringComparison.OrdinalIgnoreCase))
+                .Select(kvp => kvp.Value)
+                .Where(canonical => bible.books.Any(b => b.name.Equals(canonical, StringComparison.OrdinalIgnoreCase)))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            // Merge all matches, deduplicate
+            var all = startsWith
+                .Concat(abbrMatches)
+                .Concat(contains)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            // Sort: popularity descending, then alphabetically
+            return all
+                .OrderByDescending(name => GetPopularity(name))
+                .ThenBy(name => name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
         }
 
         /// <summary>
@@ -183,18 +282,12 @@ namespace WorshipHelperVSTO
             // the remainder looks like a valid chapter:verse reference.
             // We split on spaces but must handle numbered-book prefixes like "1 " "2 " "3 " "I " "II " "III ".
 
-            // Regex: capture the book part (letters, digits, spaces) then a chapter:verse tail.
-            // The chapter:verse tail starts with a digit and contains :, -, , etc.
-            // We use a greedy approach: find the last transition point from letters to the chapter digit.
-
             // First, handle trivial case: if the whole thing is a book name (whole chapter)
             var wholeBookResolved = ResolveBookName(bible, input);
             if (wholeBookResolved != null)
                 return (wholeBookResolved, "");
 
             // Try to split "book" from "reference" by finding where the chapter number starts.
-            // Walk from the end backwards to find the reference portion.
-            // The reference portion is the last space-delimited token(s) that begin with a digit.
             string[] tokens = Regex.Split(input, @"\s+");
 
             // Try removing tokens from the end (those are the reference part)

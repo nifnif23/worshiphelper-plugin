@@ -1,8 +1,9 @@
-﻿using Microsoft.Office.Interop.PowerPoint;
+using Microsoft.Office.Interop.PowerPoint;
+using System.Diagnostics;
 
 namespace WorshipHelperVSTO
 {
-    class WindowManager
+    public class WindowManager
     {
         Application app = Globals.ThisAddIn.Application;
 
@@ -41,7 +42,5 @@ namespace WorshipHelperVSTO
             }
             return null;
         }
-
-
     }
 }

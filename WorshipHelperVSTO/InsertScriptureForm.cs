@@ -20,6 +20,10 @@ namespace WorshipHelperVSTO
         private DateTime _lastInsertTime = DateTime.MinValue;
         private const int DEBOUNCE_MS = 1000;
 
+        // Custom suggestion dropdown (replaces built-in autocomplete for popularity ranking)
+        private ListBox _suggestionBox;
+        private bool _suppressSuggestions = false;
+
         public InsertScriptureForm()
         {
             log.Info("Loading InsertScriptureForm");
@@ -73,17 +77,122 @@ namespace WorshipHelperVSTO
             log.Debug($"Loading default bible ({cmbTranslation.SelectedItem})");
             bible = OpenSongBibleReader.LoadTranslation(cmbTranslation.SelectedItem as string);
 
-            var source = new AutoCompleteStringCollection();
-            log.Debug("Adding books");
-            source.AddRange(bible.books.Select(book => book.name).ToArray());
-            txtBook.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
-            txtBook.AutoCompleteSource = AutoCompleteSource.CustomSource;
-            txtBook.AutoCompleteCustomSource = source;
+            // ------------------------------------------------------------------
+            // Custom suggestion dropdown (popularity-ranked)
+            // Replaces the built-in AutoComplete which always sorts alphabetically.
+            // ------------------------------------------------------------------
+            txtBook.AutoCompleteMode = AutoCompleteMode.None;  // disable built-in
+            SetupSuggestionBox();
 
             btnInsert.Enabled = false;
 
             // Start in single-reference mode
             SetMode(false);
+        }
+
+        // -----------------------------------------------------------------------
+        // Custom suggestion dropdown
+        // -----------------------------------------------------------------------
+        private void SetupSuggestionBox()
+        {
+            _suggestionBox = new ListBox();
+            _suggestionBox.Font = new Font("Segoe UI", 9.5F);
+            _suggestionBox.Visible = false;
+            _suggestionBox.IntegralHeight = false; // allow partial-item height
+            _suggestionBox.BorderStyle = BorderStyle.FixedSingle;
+            _suggestionBox.Cursor = Cursors.Hand;
+
+            // Position it directly below txtBook
+            PositionSuggestionBox();
+
+            // Selection events
+            _suggestionBox.Click += SuggestionBox_Click;
+            _suggestionBox.KeyDown += SuggestionBox_KeyDown;
+
+            // Add it to the form and bring to front
+            this.Controls.Add(_suggestionBox);
+            _suggestionBox.BringToFront();
+        }
+
+        private void PositionSuggestionBox()
+        {
+            if (_suggestionBox == null || txtBook == null) return;
+            _suggestionBox.Location = new Point(txtBook.Left, txtBook.Bottom + 2);
+            _suggestionBox.Width = txtBook.Width;
+        }
+
+        private void UpdateSuggestions()
+        {
+            if (_suppressSuggestions || bible == null) return;
+
+            string input = txtBook.Text;
+            if (string.IsNullOrWhiteSpace(input))
+            {
+                _suggestionBox.Visible = false;
+                return;
+            }
+
+            var suggestions = FullReferenceParser.GetSuggestions(bible, input);
+
+            if (suggestions.Count == 0)
+            {
+                _suggestionBox.Visible = false;
+                return;
+            }
+
+            // If the only suggestion IS the current text (exact match), hide
+            if (suggestions.Count == 1 && suggestions[0].Equals(input, StringComparison.OrdinalIgnoreCase))
+            {
+                _suggestionBox.Visible = false;
+                return;
+            }
+
+            _suggestionBox.BeginUpdate();
+            _suggestionBox.Items.Clear();
+            foreach (var s in suggestions)
+                _suggestionBox.Items.Add(s);
+            _suggestionBox.EndUpdate();
+
+            // Size: show up to 8 items
+            int visibleItems = Math.Min(suggestions.Count, 8);
+            _suggestionBox.Height = visibleItems * _suggestionBox.ItemHeight + 4;
+
+            _suggestionBox.Visible = true;
+            _suggestionBox.BringToFront();
+        }
+
+        private void AcceptSuggestion()
+        {
+            if (_suggestionBox.SelectedItem == null) return;
+
+            _suppressSuggestions = true;
+            txtBook.Text = _suggestionBox.SelectedItem.ToString();
+            txtBook.SelectionStart = txtBook.Text.Length;
+            _suggestionBox.Visible = false;
+            _suppressSuggestions = false;
+
+            // Move focus to reference field
+            txtReference.Focus();
+        }
+
+        private void SuggestionBox_Click(object sender, EventArgs e)
+        {
+            AcceptSuggestion();
+        }
+
+        private void SuggestionBox_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Enter || e.KeyCode == Keys.Tab)
+            {
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+                AcceptSuggestion();
+            }
+            else if (e.KeyCode == Keys.Escape)
+            {
+                _suggestionBox.Visible = false;
+                txtBook.Focus();
+            }
         }
 
         // -----------------------------------------------------------------------
@@ -108,6 +217,10 @@ namespace WorshipHelperVSTO
 
             btnModeSingle.Visible = bulk;
             btnModeBulk.Visible = !bulk;
+
+            // Hide suggestion dropdown when switching modes
+            if (_suggestionBox != null)
+                _suggestionBox.Visible = false;
 
             if (bulk)
             {
@@ -137,11 +250,45 @@ namespace WorshipHelperVSTO
         private void txtSearchBox_TextChanged(object sender, EventArgs e)
         {
             if (!isBulkMode)
+            {
                 btnInsert.Enabled = isValidReference();
+                UpdateSuggestions();
+            }
         }
 
         private void txtSearchBox_KeyPress(object sender, KeyPressEventArgs e)
         {
+        }
+
+        /// <summary>
+        /// Handle special keys in txtBook for suggestion navigation.
+        /// </summary>
+        private void txtBook_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (_suggestionBox == null || !_suggestionBox.Visible) return;
+
+            if (e.KeyCode == Keys.Down)
+            {
+                // Move focus into the suggestion box
+                _suggestionBox.Focus();
+                if (_suggestionBox.Items.Count > 0 && _suggestionBox.SelectedIndex < 0)
+                    _suggestionBox.SelectedIndex = 0;
+                e.Handled = true;
+            }
+            else if (e.KeyCode == Keys.Escape)
+            {
+                _suggestionBox.Visible = false;
+                e.Handled = true;
+            }
+            else if (e.KeyCode == Keys.Enter && _suggestionBox.Visible && _suggestionBox.Items.Count > 0)
+            {
+                // Accept the first suggestion if none is selected
+                if (_suggestionBox.SelectedIndex < 0)
+                    _suggestionBox.SelectedIndex = 0;
+                AcceptSuggestion();
+                e.Handled = true;
+                e.SuppressKeyPress = true; // prevent the Enter "ding"
+            }
         }
 
         private bool isValidReference()
@@ -425,10 +572,11 @@ namespace WorshipHelperVSTO
 
             bible = OpenSongBibleReader.LoadTranslation(translationName);
 
-            // Refresh autocomplete
-            var source = new AutoCompleteStringCollection();
-            source.AddRange(bible.books.Select(book => book.name).ToArray());
-            txtBook.AutoCompleteCustomSource = source;
+            // Re-validate current book text against new translation
+            if (!isBulkMode)
+            {
+                btnInsert.Enabled = isValidReference();
+            }
 
             var registryKey = Registry.CurrentUser.CreateSubKey(@"SOFTWARE\WorshipHelper");
             registryKey.SetValue("LastBibleTranslation", translationName);
@@ -448,6 +596,16 @@ namespace WorshipHelperVSTO
             var registryKey = Registry.CurrentUser.CreateSubKey(@"SOFTWARE\WorshipHelper");
             registryKey.SetValue("MultiVerseProjection", chkMultiVerse.Checked ? 1 : 0, RegistryValueKind.DWord);
             log.Debug($"MultiVerseProjection preference saved: {chkMultiVerse.Checked}");
+        }
+
+        /// <summary>
+        /// Hide suggestion box when the form loses focus or is deactivated.
+        /// </summary>
+        protected override void OnDeactivate(EventArgs e)
+        {
+            base.OnDeactivate(e);
+            if (_suggestionBox != null)
+                _suggestionBox.Visible = false;
         }
     }
 

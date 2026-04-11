@@ -7,7 +7,7 @@ using static Microsoft.Office.Core.MsoTriState;
 
 namespace WorshipHelperVSTO
 {
-    class ScriptureManager
+    public class ScriptureManager
     {
         private static readonly ILog log = LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
 

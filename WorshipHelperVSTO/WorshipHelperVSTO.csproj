@@ -158,6 +158,7 @@
   <PropertyGroup>
     <SignManifests>false</SignManifests>
     <SignAssembly>false</SignAssembly>
+    <GenerateClickOnceManifests>false</GenerateClickOnceManifests>
   </PropertyGroup>
 
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />

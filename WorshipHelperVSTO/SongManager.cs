@@ -1,4 +1,4 @@
-﻿using Microsoft.Office.Core;
+using Microsoft.Office.Core;
 using Microsoft.Office.Interop.PowerPoint;
 using Microsoft.Win32;
 using System;
@@ -8,7 +8,7 @@ using static Microsoft.Office.Core.MsoTriState;
 
 namespace WorshipHelperVSTO
 {
-    class SongManager
+    public class SongManager
     {
         Application app = Globals.ThisAddIn.Application;
 

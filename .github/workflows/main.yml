@@ -27,15 +27,19 @@ jobs:
       - name: Restore NuGet packages
         run: nuget restore WorshipHelper.sln
 
-      - name: Build VSTO (Release)
+      # Phase 1: Compile the DLL without any signing / ClickOnce manifests.
+      # This avoids the "ManageCertificateStore" / "Cannot sign" errors in CI.
+      - name: Build VSTO (DLL Only)
         run: |
           msbuild WorshipHelperVSTO\WorshipHelperVSTO.csproj `
             /p:Configuration=Release `
             /p:Platform=AnyCPU `
+            /p:SignManifests=false `
+            /p:GenerateClickOnceManifests=false `
             /verbosity:minimal
 
-      # -Type CodeSigningCert adds the Code Signing EKU that SignTool requires.
-      # Import into both CurrentUser and LocalMachine so all MSBuild sub-processes can find it.
+      # Phase 2: Create a self-signed certificate so that the Publish step
+      # can produce a valid .vsto manifest (required by the MSI).
       - name: Generate self-signed certificate
         run: |
           $cert = New-SelfSignedCertificate `
@@ -49,21 +53,25 @@ jobs:
           $pwd = ConvertTo-SecureString -String "build123" -Force -AsPlainText
           $pfxPath = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\ci-cert.pfx"
           Export-PfxCertificate -Cert $cert -FilePath $pfxPath -Password $pwd | Out-Null
+
+          # Import to LocalMachine so all MSBuild sub-processes can find it
           $store = New-Object System.Security.Cryptography.X509Certificates.X509Store("My", "LocalMachine")
           $store.Open("ReadWrite")
           $store.Add($cert)
           $store.Close()
+
           echo "CERT_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
           echo "PFX_PATH=$pfxPath" >> $env:GITHUB_ENV
           echo "Certificate generated: $($cert.Thumbprint)"
 
-      - name: Publish VSTO
+      # Phase 3: Publish with signing so the .vsto manifest is created.
+      - name: Publish VSTO (With Signing)
         run: |
           msbuild WorshipHelperVSTO\WorshipHelperVSTO.csproj `
             /target:Publish `
             /p:Configuration=Release `
             /p:Platform=AnyCPU `
-            /p:PublishDir="${env:GITHUB_WORKSPACE}\WorshipHelperVSTO\publish\" `
+            /p:PublishDir="${{ github.workspace }}\WorshipHelperVSTO\publish\" `
             /p:SignManifests=true `
             /p:ManifestCertificateThumbprint="$env:CERT_THUMBPRINT" `
             /p:ManifestKeyFile="$env:PFX_PATH" `

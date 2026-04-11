@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Xml.Linq;
@@ -26,7 +26,7 @@ namespace WorshipHelperVSTO
         public string text { get; set; }
     }
 
-    class OpenSongBibleReader
+    public class OpenSongBibleReader
     {
         public static Bible LoadTranslation(String translationName)
         {

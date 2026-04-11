@@ -126,6 +126,7 @@ namespace WorshipHelperVSTO
             this.txtBook.TabIndex = 2;
             this.txtBook.TextChanged += new System.EventHandler(this.txtSearchBox_TextChanged);
             this.txtBook.KeyPress += new System.Windows.Forms.KeyPressEventHandler(this.txtSearchBox_KeyPress);
+            this.txtBook.KeyDown += new System.Windows.Forms.KeyEventHandler(this.txtBook_KeyDown);
 
             row += rowH;
 
