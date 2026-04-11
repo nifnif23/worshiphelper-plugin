@@ -7,6 +7,78 @@ namespace WorshipHelperVSTO
 {
     public partial class TestRibbonItem
     {
+        private SpeechToScriptureService _speechService;
+        private System.Windows.Forms.Control _uiThreadMarshaller;
+
+        private SpeechToScriptureService SpeechService
+        {
+            get
+            {
+                if (_speechService == null)
+                {
+                    // Create a hidden WinForms control on the UI thread to marshal callbacks
+                    _uiThreadMarshaller = new System.Windows.Forms.Control();
+                    _uiThreadMarshaller.CreateControl();
+                    _speechService = new SpeechToScriptureService();
+                    _speechService.OnReferenceDetected += OnReferenceDetected;
+                }
+                return _speechService;
+            }
+        }
+
+        private void OnReferenceDetected(object sender, ReferenceDetectedEventArgs e)
+        {
+            if (_uiThreadMarshaller == null || !_uiThreadMarshaller.IsHandleCreated) return;
+
+            _uiThreadMarshaller.BeginInvoke(new System.Action(() =>
+            {
+                try
+                {
+                    var lastTranslation = Microsoft.Win32.Registry.CurrentUser
+                        .OpenSubKey(@"SOFTWARE\WorshipHelper")
+                        ?.GetValue("LastBibleTranslation") as string ?? "ESV";
+
+                    var bible = OpenSongBibleReader.LoadTranslation(lastTranslation);
+
+                    var templateFiles = System.IO.Directory.GetFiles(
+                        ThisAddIn.appDataPath + @"\Templates", "*.pptx");
+                    if (templateFiles.Length == 0) return;
+                    var template = new ScriptureTemplate(templateFiles[0]);
+
+                    var parsed = FullReferenceParser.ParseFullReference(bible, e.NormalisedReference);
+                    if (parsed == null) return;
+
+                    var scriptureRef = ScriptureReference.parse(bible, parsed.Value.BookName, parsed.Value.Reference);
+                    if (scriptureRef == null) return;
+
+                    var verseNums = System.Linq.Enumerable.Range(scriptureRef.verseNumStart,
+                        scriptureRef.verseNumEnd - scriptureRef.verseNumStart + 1).ToList();
+
+                    new ScriptureManager().addScripture(template, bible,
+                        scriptureRef.bookName, scriptureRef.chapterNum, verseNums, verseNums.Count > 1);
+                }
+                catch (System.Exception ex)
+                {
+                    log4net.LogManager.GetLogger(typeof(TestRibbonItem)).Error("Speech insert failed", ex);
+                }
+            }));
+        }
+
+        private void btnToggleSpeech_Click(object sender, RibbonControlEventArgs e)
+        {
+            bool isNowListening = SpeechService.Toggle();
+
+            if (isNowListening)
+            {
+                btnToggleSpeech.Image = global::WorshipHelperVSTO.Properties.Resources.mic_active;
+                btnToggleSpeech.Label = "Listening...";
+            }
+            else
+            {
+                btnToggleSpeech.Image = global::WorshipHelperVSTO.Properties.Resources.mic;
+                btnToggleSpeech.Label = "Listen";
+            }
+        }
         private void TestRibbonItem_Load(object sender, RibbonUIEventArgs e)
         {
             var favRegistryKey = Registry.CurrentUser.CreateSubKey(@"SOFTWARE\WorshipHelper\Favourites");

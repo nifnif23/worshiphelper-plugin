@@ -154,6 +154,8 @@
   <ItemGroup>
     <None Include="Resources\music-note.png" />
     <None Include="Resources\bible.png" />
+    <None Include="Resources\mic.png" />
+    <None Include="Resources\mic_active.png" />
     <None Include="Resources\powerpoint.jpg" />
     <None Include="Resources\icon-plus.jpg" />
   </ItemGroup>

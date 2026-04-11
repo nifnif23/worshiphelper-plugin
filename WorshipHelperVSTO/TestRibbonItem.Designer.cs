@@ -77,6 +77,8 @@ namespace WorshipHelperVSTO
             this.btnInsertSong = this.Factory.CreateRibbonButton();
             this.favouritesGroup = this.Factory.CreateRibbonGroup();
             this.btnAddFavourite = this.Factory.CreateRibbonButton();
+            this.grpSpeech = this.Factory.CreateRibbonGroup();
+            this.btnToggleSpeech = this.Factory.CreateRibbonToggleButton();
             this.grpDebug = this.Factory.CreateRibbonGroup();
             this.btnSelfTest = this.Factory.CreateRibbonButton();
             this.tab1.SuspendLayout();
@@ -89,6 +91,7 @@ namespace WorshipHelperVSTO
             // 
             this.tab1.Groups.Add(this.group1);
             this.tab1.Groups.Add(this.favouritesGroup);
+            this.tab1.Groups.Add(this.grpSpeech);
             this.tab1.Groups.Add(this.grpDebug);
             this.tab1.Label = "WorshipHelper";
             this.tab1.Name = "tab1";
@@ -133,6 +136,21 @@ namespace WorshipHelperVSTO
             this.btnAddFavourite.ShowImage = true;
             this.btnAddFavourite.Click += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.btnAddFavourite_Click);
             // 
+            // grpSpeech
+            // 
+            this.grpSpeech.Items.Add(this.btnToggleSpeech);
+            this.grpSpeech.Label = "Speech";
+            this.grpSpeech.Name = "grpSpeech";
+            // 
+            // btnToggleSpeech
+            // 
+            this.btnToggleSpeech.ControlSize = Microsoft.Office.Core.RibbonControlSize.RibbonControlSizeLarge;
+            this.btnToggleSpeech.Image = global::WorshipHelperVSTO.Properties.Resources.mic;
+            this.btnToggleSpeech.Label = "Listen";
+            this.btnToggleSpeech.Name = "btnToggleSpeech";
+            this.btnToggleSpeech.ShowImage = true;
+            this.btnToggleSpeech.Click += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.btnToggleSpeech_Click);
+            // 
             // grpDebug
             // 
             this.grpDebug.Items.Add(this.btnSelfTest);
@@ -171,6 +189,8 @@ namespace WorshipHelperVSTO
         internal Microsoft.Office.Tools.Ribbon.RibbonButton btnInsertSong;
         internal Microsoft.Office.Tools.Ribbon.RibbonGroup favouritesGroup;
         internal Microsoft.Office.Tools.Ribbon.RibbonButton btnAddFavourite;
+        internal Microsoft.Office.Tools.Ribbon.RibbonGroup grpSpeech;
+        internal Microsoft.Office.Tools.Ribbon.RibbonToggleButton btnToggleSpeech;
         internal RibbonGroup grpDebug;
         internal RibbonButton btnSelfTest;
     }
