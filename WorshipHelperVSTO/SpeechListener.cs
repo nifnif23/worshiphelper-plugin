@@ -50,11 +50,26 @@ namespace WorshipHelperVSTO
 
         private static string ResolveModelPath()
         {
+            // VSTO shadow-copies the DLL to a temp folder, so
+            // Assembly.Location doesn't point to the install directory.
+            // Read InstallLocation from the registry — the MSI writes it.
+            string installDir = Microsoft.Win32.Registry.CurrentUser
+                .OpenSubKey(@"SOFTWARE\WorshipHelper")
+                ?.GetValue("InstallLocation") as string;
+
+            if (!string.IsNullOrEmpty(installDir))
+            {
+                string registryPath = Path.Combine(installDir, "data", "vosk-model");
+                if (Directory.Exists(registryPath)) return registryPath;
+            }
+
+            // Dev/debug fallback: next to the DLL (works without VSTO shadow-copying)
             string dllDir = Path.GetDirectoryName(
                 System.Reflection.Assembly.GetExecutingAssembly().Location) ?? "";
             string bundled = Path.Combine(dllDir, "data", "vosk-model");
             if (Directory.Exists(bundled)) return bundled;
 
+            // Last resort: manual install in AppData
             return Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                 "WorshipHelper", "vosk-model");
