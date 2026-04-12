@@ -231,7 +231,7 @@ namespace WorshipHelperVSTO
             if (string.IsNullOrWhiteSpace(rawText)) return;
 
             // Rationalise: strip [unk] tokens, normalise spoken punctuation, etc.
-            string text = SpeechRationaliser.Rationalise(rawText);
+            string text = RationaliseVoskOutput(rawText);
             if (string.IsNullOrWhiteSpace(text)) return;
 
             float confidence = ExtractAverageConfidence(json);
@@ -273,6 +273,23 @@ namespace WorshipHelperVSTO
                 }
             }
             return count > 0 ? total / count : 0.8f;
+        }
+
+        // -------------------------------------------------------------------------
+        // Rationaliser
+        // -------------------------------------------------------------------------
+
+        /// <summary>
+        /// Cleans raw Vosk output before it enters the Bible reference detection
+        /// pipeline.  Strips [unk] tokens produced by the grammar for out-of-
+        /// vocabulary phonemes, then collapses any resulting extra whitespace.
+        /// </summary>
+        private static string RationaliseVoskOutput(string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) return string.Empty;
+            string text = Regex.Replace(raw, @"\[unk\]", " ", RegexOptions.IgnoreCase);
+            text = Regex.Replace(text, @"\s{2,}", " ").Trim();
+            return text;
         }
 
         // -------------------------------------------------------------------------
