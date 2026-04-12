@@ -17,7 +17,9 @@
 // ============================================================================
 
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.RegularExpressions;
 using log4net;
 using NAudio.Wave;
@@ -117,10 +119,9 @@ namespace WorshipHelperVSTO
                     Vosk.Vosk.SetLogLevel(-1);
 
                     var model = new Model(ModelPath);
-                    _recogniser = new VoskRecognizer(model, 16000f);
+                    _recogniser = new VoskRecognizer(model, 16000f, BuildBibleGrammar());
                     _recogniser.SetMaxAlternatives(0);
                     _recogniser.SetWords(true);
-                    _recogniser.SetGrammar(BuildBibleGrammar());
 
                     _waveIn = new WaveInEvent
                     {
@@ -226,12 +227,19 @@ namespace WorshipHelperVSTO
             var textMatch = Regex.Match(json, "\"text\"\\s*:\\s*\"([^\"]+)\"");
             if (!textMatch.Success) return;
 
-            string text = textMatch.Groups[1].Value.Trim();
+            string rawText = textMatch.Groups[1].Value.Trim();
+            if (string.IsNullOrWhiteSpace(rawText)) return;
+
+            // Rationalise: strip [unk] tokens, normalise spoken punctuation, etc.
+            string text = SpeechRationaliser.Rationalise(rawText);
             if (string.IsNullOrWhiteSpace(text)) return;
 
             float confidence = ExtractAverageConfidence(json);
 
-            log.Debug($"SpeechListener (Vosk): \"{text}\" (conf={confidence:F2})");
+            if (rawText != text)
+                log.Debug($"SpeechListener: raw=\"{rawText}\" → rationalised=\"{text}\" (conf={confidence:F2})");
+            else
+                log.Debug($"SpeechListener (Vosk): \"{text}\" (conf={confidence:F2})");
 
             if (confidence < MinEngineConfidence)
             {
@@ -272,21 +280,21 @@ namespace WorshipHelperVSTO
         // -------------------------------------------------------------------------
 
         /// <summary>
-        /// Builds a JSON grammar string that constrains Vosk to only the words
-        /// relevant to spoken Bible references — book names, number words, and
-        /// connector words.  This eliminates the "zechariah → zachariah night birth"
-        /// class of errors because the recogniser can no longer hallucinate arbitrary
-        /// English words.
+        /// Builds a JSON word-list that constrains Vosk to only Bible-relevant
+        /// vocabulary.  Without this, Vosk maps "Zechariah" phonemes to random
+        /// English words ("zachariah night birth a to her").
         ///
-        /// "[unk]" is included so that non-Bible speech produces an [unk] token
-        /// rather than a false positive.
+        /// "[unk]" is included so that off-topic speech produces an [unk] token
+        /// instead of a false-positive book name match.
+        ///
+        /// Digit strings ("1"–"176") are included because Vosk sometimes outputs
+        /// them even in grammar mode, and WordsToNumber already handles them.
         /// </summary>
         private static string BuildBibleGrammar()
         {
             var words = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
-                // ── Book name words ────────────────────────────────────────────
-                // OT
+                // ── Book name words (OT) ───────────────────────────────────────
                 "genesis","gen",
                 "exodus","exod",
                 "leviticus","lev",
@@ -323,7 +331,8 @@ namespace WorshipHelperVSTO
                 "haggai","hag",
                 "zechariah","zech",
                 "malachi","mal",
-                // NT
+
+                // ── Book name words (NT) ───────────────────────────────────────
                 "matthew","matt","mat",
                 "mark",
                 "luke",
@@ -350,7 +359,7 @@ namespace WorshipHelperVSTO
                 "i","ii","iii",
                 "of",   // "song of solomon"
 
-                // ── Number words (must match SpokenNumberConverter.Cardinals) ──
+                // ── Number words ───────────────────────────────────────────────
                 "zero","oh","o",
                 "one","two","three","four","five",
                 "six","seven","eight","nine","ten",
@@ -360,10 +369,10 @@ namespace WorshipHelperVSTO
                 "sixty","seventy","eighty","ninety",
                 "hundred",
 
-                // ── Reference connector words ──────────────────────────────────
+                // ── Reference connector / structure words ──────────────────────
                 "chapter","chapters",
                 "verse","verses",
-                "through","to","and","colon","dash",
+                "through","to","and","colon","dash","hyphen",
 
                 // ── Common preamble / filler words ────────────────────────────
                 "read","reading","turn","turning","open","opening",
@@ -371,16 +380,21 @@ namespace WorshipHelperVSTO
                 "let","lets","us","please","now","okay","ok",
                 "the","book","passage","scripture","text",
                 "today","tonight","this","morning","evening",
-                "turn","says","we're","i'm",
+                "says","we're","i'm","from","at","in",
 
-                // ── Allow unknown words so non-Bible speech doesn't hallucinate ─
+                // ── Unknown-word escape hatch ──────────────────────────────────
+                // Without this Vosk forces every phoneme into our vocabulary,
+                // causing false positives from non-Bible speech.
                 "[unk]",
             };
 
-            // Vosk grammar format: ["word1","word2",...]
-            var quoted = words
-                .OrderBy(w => w)
-                .Select(w => $"\"{w.Replace("\"", "\\\"")}\"");
+            // Also add digit strings 1–176 (max Bible verse number).
+            // Vosk can output these even in grammar mode, and WordsToNumber
+            // already handles digit strings via int.TryParse.
+            for (int n = 1; n <= 176; n++)
+                words.Add(n.ToString());
+
+            var quoted = words.OrderBy(w => w).Select(w => $"\"{w.Replace("\"", "\\\"")}\"");
             return "[" + string.Join(",", quoted) + "]";
         }
 
