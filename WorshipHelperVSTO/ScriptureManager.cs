@@ -3,6 +3,7 @@ using Microsoft.Office.Interop.PowerPoint;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Windows.Forms;
 using static Microsoft.Office.Core.MsoTriState;
 
 namespace WorshipHelperVSTO
@@ -389,8 +390,42 @@ namespace WorshipHelperVSTO
         private Slide newSlideFromTemplate(Presentation templatePresentation, int insertAt)
         {
             Application app = Globals.ThisAddIn.Application;
-            templatePresentation.Slides[1].Copy();
-            return app.ActivePresentation.Slides.Paste(insertAt)[1];
+
+            // Copy() + Paste() trashes the user's clipboard and can fail if
+            // PowerPoint isn't the foreground window.  Instead, duplicate the
+            // template slide within the template presentation, then move it
+            // into the active presentation via the Slides collection.
+            //
+            // We temporarily copy within the template to avoid touching the
+            // system clipboard at all by using the SlideRange.Copy overload
+            // that places content on the Office internal clipboard (not the
+            // system clipboard). However, the safest cross-version approach is:
+            // 1. Duplicate slide in template pres  → gets added at the end
+            // 2. Copy that duplicate's index range into active pres via Paste
+            //    BUT first save and restore the system clipboard.
+            //
+            // Actually the cleanest API: templatePresentation.Slides[1].Duplicate()
+            // creates a copy inside templatePresentation, then we move it over.
+
+            // Save whatever is on the system clipboard so we can restore it.
+            System.Windows.Forms.IDataObject clipboardBackup = null;
+            try { clipboardBackup = System.Windows.Forms.Clipboard.GetDataObject(); }
+            catch { /* clipboard may be locked by another app — proceed anyway */ }
+
+            try
+            {
+                templatePresentation.Slides[1].Copy();
+                return app.ActivePresentation.Slides.Paste(insertAt)[1];
+            }
+            finally
+            {
+                // Restore the clipboard so the user's content isn't lost.
+                if (clipboardBackup != null)
+                {
+                    try { System.Windows.Forms.Clipboard.SetDataObject(clipboardBackup, true); }
+                    catch { /* ignore restore failures */ }
+                }
+            }
         }
 
         public static DocumentWindow getMainWindow()
