@@ -64,7 +64,10 @@ namespace WorshipHelperVSTO
         /// </summary>
         private static readonly HashSet<string> Fillers = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "and", "a"
+            "and", "a",
+            // spoken punctuation — already replaced before reaching WordsToNumber,
+            // but listed here as a safety net in case they appear in isolation
+            "colon", "dash", "hyphen",
         };
 
         // -----------------------------------------------------------------------
@@ -165,6 +168,11 @@ namespace WorshipHelperVSTO
             normalised = Regex.Replace(normalised, @"\b(verse|verses)\b", "VERSESEP", RegexOptions.IgnoreCase);
             normalised = Regex.Replace(normalised, @"\b(from)\b", " ", RegexOptions.IgnoreCase);
             normalised = Regex.Replace(normalised, @"\b(through)\b", "to", RegexOptions.IgnoreCase);
+
+            // Spoken punctuation from the Vosk grammar vocabulary:
+            //   "zechariah nine colon eight dash ten" → chapter 9, verse 8–10
+            normalised = Regex.Replace(normalised, @"\bcolon\b", "VERSESEP", RegexOptions.IgnoreCase);
+            normalised = Regex.Replace(normalised, @"\b(dash|hyphen)\b", "to", RegexOptions.IgnoreCase);
 
             // Collapse whitespace
             normalised = Regex.Replace(normalised, @"\s+", " ").Trim();
