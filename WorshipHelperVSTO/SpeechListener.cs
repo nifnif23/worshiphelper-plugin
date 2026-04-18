@@ -10,9 +10,15 @@
 //   NAudio                — add via NuGet Package Manager (audio capture)
 //
 // Model download (one-time, manual step — see SETUP.md):
-//   Small (~50 MB, fast):  https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
-//   Large (~1.8 GB, best): https://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip
-//   Extract to:            %APPDATA%\WorshipHelper\vosk-model\
+//   Recommended (~1.8 GB, best accuracy):
+//     https://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip
+//   Fallback (~50 MB, fast load):
+//     https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
+//   Extract whichever you choose to: %APPDATA%\WorshipHelper\vosk-model\
+//
+//   The large model is strongly preferred — it significantly improves accuracy
+//   for accented speech and reduces phonetic misfires (e.g. "eight" → "amos").
+//   On modern hardware (8 GB+ RAM, SSD) the load time difference is ~2 seconds.
 //
 // ============================================================================
 
@@ -148,6 +154,12 @@ namespace WorshipHelperVSTO
                     _waveIn.RecordingStopped += OnRecordingStopped;
                     _waveIn.StartRecording();
 
+                    // Pre-warm the acoustic model: the first AcceptWaveform call after
+                    // load is slow (JIT + model init). Feeding a silent buffer here eats
+                    // that cost during startup rather than on the first real utterance,
+                    // which prevents a noticeable freeze mid-service.
+                    PreWarmRecogniser();
+
                     _isListening = true;
 
                     log.Info("SpeechListener (Vosk): Now listening.");
@@ -186,6 +198,34 @@ namespace WorshipHelperVSTO
         {
             if (IsListening) { Stop(); return false; }
             else { Start(); return true; }
+        }
+
+        // -------------------------------------------------------------------------
+        // Pre-warm
+        // -------------------------------------------------------------------------
+
+        /// <summary>
+        /// Feeds 100ms of silence through the recogniser immediately after startup.
+        /// The large Vosk model (vosk-model-en-us-0.22) defers some initialisation
+        /// to the first AcceptWaveform call. Without pre-warming this causes a ~1s
+        /// freeze on the very first real utterance. Running it here moves that cost
+        /// to the background start sequence where it is invisible to the user.
+        /// </summary>
+        private void PreWarmRecogniser()
+        {
+            try
+            {
+                // 16000 samples/sec × 1 channel × 2 bytes/sample × 0.1s = 3200 bytes of silence
+                var silence = new byte[3200];
+                lock (_lock)
+                {
+                    _recogniser?.AcceptWaveform(silence, silence.Length);
+                }
+            }
+            catch (Exception ex)
+            {
+                log.Debug($"SpeechListener: Pre-warm skipped ({ex.Message})");
+            }
         }
 
         // -------------------------------------------------------------------------
@@ -340,71 +380,72 @@ namespace WorshipHelperVSTO
             var words = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
                 // ── Book name words (OT) ───────────────────────────────────────
-                "genesis","gen",
-                "exodus","exod",
-                "leviticus","lev",
-                "numbers","num",
-                "deuteronomy","deut","deutronomy","duteronomy",
-                "joshua","josh",
-                "judges","judg",
+                // Full names only — no abbreviations (they give Vosk false targets
+                // and are never spoken aloud in a normal service context).
+                "genesis",
+                "exodus",
+                "leviticus",
+                "numbers",
+                "deuteronomy","deutronomy","duteronomy",
+                "joshua",
+                "judges",
                 "ruth",
-                "samuel","sam",
+                "samuel",
                 "kings","king",
-                "chronicles","chron",
+                "chronicles",
                 "ezra",
-                "nehemiah","neh","nehemia","nehimiah","nehimia",
+                "nehemiah","nehemia","nehimiah","nehimia",
                 "esther",
                 "job",
-                "psalms","psalm","psa","salms","sams",
-                "proverbs","proverb","prov",
-                "ecclesiastes","eccl","eccles","ecclesiaste",
+                "psalms","psalm","salms","sams",
+                "proverbs","proverb",
+                "ecclesiastes","ecclesiaste",
                 "song","solomon","songs",
-                "isaiah","isa","esaiah","isaia",
-                "jeremiah","jer","jeremia","jerimiah","jerimia",
-                "lamentations","lam","lamentation",
-                "ezekiel","ezek","ezekia","ezekel",
-                "daniel","dan",
-                "hosea","hos","hosia",
+                "isaiah","esaiah","isaia",
+                "jeremiah","jeremia","jerimiah","jerimia",
+                "lamentations","lamentation",
+                "ezekiel","ezekia","ezekel",
+                "daniel",
+                "hosea","hosia",
                 "joel",
                 "amos",
-                "obadiah","obad","obadia","obadiya",
+                "obadiah","obadia","obadiya",
                 "jonah",
-                "micah","mic","mica",
-                "nahum","nah",
-                "habakkuk","hab","habakuk","habacuc","habacuk",
-                "zephaniah","zeph","zefaniah","zefania",
-                "haggai","hag","hagai",
+                "micah","mica",
+                "nahum",
+                "habakkuk","habakuk","habacuc","habacuk",
+                "zephaniah","zefaniah","zefania",
+                "haggai","hagai",
                 // Zechariah phonetic variants — critical for Nigerian accent
-                "zechariah","zech",
+                "zechariah",
                 "zachariah","zacharia","zakaria","zakariah",
                 "zekaria","zekariah","zecharia","zecharias","zacharias",
-                "malachi","mal","malaki",
+                "malachi","malaki",
 
                 // ── Book name words (NT) ───────────────────────────────────────
-                "matthew","matt","mat","mathew","mathieu",
+                "matthew","mathew","mathieu",
                 "mark",
                 "luke",
-                "john","jn",
-                "acts","act",
-                "romans","rom",
-                "corinthians","cor","corinthian",
-                "galatians","gal","galatian",
-                "ephesians","eph","ephesian",
-                "philippians","phil","php","philippian","philipians","philipian",
-                "colossians","col","colossian","colosians","colosian",
-                "thessalonians","thess","thessalonian",
-                "timothy","tim","timoty",
-                "titus","tit",
-                "philemon","phlm","philem","filemon",
-                "hebrews","heb","hebrew",
-                "james","jas",
-                "peter","pet",
+                "john",
+                "acts",
+                "romans",
+                "corinthians","corinthian",
+                "galatians","galatian",
+                "ephesians","ephesian",
+                "philippians","philippian","philipians","philipian",
+                "colossians","colossian","colosians","colosian",
+                "thessalonians","thessalonian",
+                "timothy","timoty",
+                "titus",
+                "philemon","filemon",
+                "hebrews","hebrew",
+                "james",
+                "peter",
                 "jude",
-                "revelation","revelations","rev","revelacion","revelasion",
+                "revelation","revelations","revelacion","revelasion",
 
                 // ── Numbered-book prefixes ─────────────────────────────────────
                 "first","second","third",
-                "i","ii","iii",
                 "of",   // "song of solomon"
 
                 // ── Number words (canonical) ───────────────────────────────────

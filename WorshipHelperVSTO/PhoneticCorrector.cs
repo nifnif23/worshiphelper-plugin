@@ -352,6 +352,15 @@ namespace WorshipHelperVSTO
             // "for" is a preamble word AND can be "four" — only fix when numeric context
             text = FixAmbiguousFor(text);
 
+            // Pass 5: Context-sensitive "amos" → "eight" fix.
+            // Vosk maps "eight" (/eɪt/) to "amos" (/eɪməs/) because they share the
+            // /eɪ/ onset and "amos" is the nearest in-vocabulary word.
+            // "Amos" as a book name always appears as the FIRST meaningful token.
+            // If "amos" appears AFTER the first token, it must be a number mishearing.
+            // e.g. "zechariah amos verse three" → "zechariah eight verse three"
+            //      "psalm amos sixteen"         → "psalm eight sixteen"
+            text = FixAmosAsEight(text);
+
             if (!string.Equals(text, rawText, StringComparison.OrdinalIgnoreCase))
             {
                 // Log the correction so we can build a better map over time
@@ -488,5 +497,33 @@ namespace WorshipHelperVSTO
 
         private static bool IsBookOrStructure(string token)
             => _structureOrBookWords.Contains(token);
+
+        /// <summary>
+        /// Fixes "amos" appearing in a non-leading position as a mishearing of "eight".
+        ///
+        /// Vosk maps "eight" (/eɪt/) → "amos" (/eɪməs/) because they share the /eɪ/
+        /// onset and "amos" is the phonetically nearest in-vocabulary word. This is a
+        /// consistent pattern: "chapter eight verse three" → "chapter amos verse three".
+        ///
+        /// The rule is safe because the book of Amos, if spoken, is always the FIRST
+        /// meaningful token in a reference ("amos three eight"). Any "amos" at position
+        /// ≥1 is unambiguously a number mishearing.
+        /// </summary>
+        private static string FixAmosAsEight(string text)
+        {
+            var tokens = text.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            if (tokens.Length <= 1) return text;
+
+            bool changed = false;
+            for (int i = 1; i < tokens.Length; i++)
+            {
+                if (string.Equals(tokens[i], "amos", StringComparison.OrdinalIgnoreCase))
+                {
+                    tokens[i] = "eight";
+                    changed = true;
+                }
+            }
+            return changed ? string.Join(" ", tokens) : text;
+        }
     }
 }
