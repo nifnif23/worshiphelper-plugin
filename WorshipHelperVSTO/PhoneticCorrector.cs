@@ -50,7 +50,72 @@ namespace WorshipHelperVSTO
     public static class PhoneticCorrector
     {
         // -----------------------------------------------------------------------
-        // Pass 1: Single-token phonetic replacements
+        // Pass 0: Book name normalisation
+        //
+        // Maps phonetic variants of book names that Vosk might output back to
+        // the canonical form that BibleReferenceDetector expects.
+        // This runs BEFORE number correction so the detector sees clean names.
+        //
+        // Key case: "zachariah" / "zacharia" / "zakaria" → "zechariah"
+        // The detector's fuzzy matching would catch most of these anyway, but
+        // normalising them here means we don't rely on fuzzy + get cleaner logs.
+        // -----------------------------------------------------------------------
+        private static readonly List<(string From, string To)> BookNameFixes =
+            new List<(string, string)>
+        {
+            // Zechariah — most common problem book for Nigerian accent
+            ( "zachariah",   "zechariah" ),
+            ( "zacharia",    "zechariah" ),
+            ( "zakaria",     "zechariah" ),
+            ( "zakariah",    "zechariah" ),
+            ( "zekaria",     "zechariah" ),
+            ( "zekariah",    "zechariah" ),
+            ( "zecharia",    "zechariah" ),
+            ( "zecharias",   "zechariah" ),
+            ( "zacharias",   "zechariah" ),
+
+            // Other commonly mispronounced OT books
+            ( "nehemia",     "nehemiah"  ),
+            ( "nehimiah",    "nehemiah"  ),
+            ( "nehimia",     "nehemiah"  ),
+            ( "jerimiah",    "jeremiah"  ),
+            ( "jerimia",     "jeremiah"  ),
+            ( "jeremia",     "jeremiah"  ),
+            ( "obadia",      "obadiah"   ),
+            ( "obadiya",     "obadiah"   ),
+            ( "zefaniah",    "zephaniah" ),
+            ( "zefania",     "zephaniah" ),
+            ( "habakuk",     "habakkuk"  ),
+            ( "habacuc",     "habakkuk"  ),
+            ( "habacuk",     "habakkuk"  ),
+            ( "hagai",       "haggai"    ),
+            ( "malaki",      "malachi"   ),
+            ( "esaiah",      "isaiah"    ),
+            ( "isaia",       "isaiah"    ),
+            ( "ezekel",      "ezekiel"   ),
+            ( "ezekia",      "ezekiel"   ),
+            ( "hosia",       "hosea"     ),
+            ( "mica",        "micah"     ),
+            ( "salms",       "psalms"    ),
+            ( "sams",        "psalms"    ),
+
+            // NT books
+            ( "mathew",      "matthew"   ),
+            ( "mathieu",     "matthew"   ),
+            ( "corinthian",  "corinthians" ),
+            ( "galatian",    "galatians"   ),
+            ( "ephesian",    "ephesians"   ),
+            ( "philipians",  "philippians" ),
+            ( "philipian",   "philippians" ),
+            ( "colosians",   "colossians"  ),
+            ( "colosian",    "colossians"  ),
+            ( "thessalonian","thessalonians" ),
+            ( "timoty",      "timothy"   ),
+            ( "filemon",     "philemon"  ),
+            ( "hebrew",      "hebrews"   ),
+            ( "revelacion",  "revelation"),
+            ( "revelasion",  "revelation"),
+        };
         //
         // Format: { "mishearing" → "correction" }
         //
@@ -271,6 +336,9 @@ namespace WorshipHelperVSTO
 
             string text = rawText.Trim().ToLowerInvariant();
 
+            // Pass 0: Book name normalisation — fix mispronounced/misheard book names
+            text = ApplyBookNameFixes(text);
+
             // Pass 1: Phrase replacements (longest-first, case-insensitive)
             text = ApplyPhraseFixes(text);
 
@@ -297,6 +365,19 @@ namespace WorshipHelperVSTO
         // -----------------------------------------------------------------------
         // Private helpers
         // -----------------------------------------------------------------------
+
+        private static string ApplyBookNameFixes(string text)
+        {
+            foreach (var (from, to) in BookNameFixes)
+            {
+                text = Regex.Replace(
+                    text,
+                    @"\b" + Regex.Escape(from) + @"\b",
+                    to,
+                    RegexOptions.IgnoreCase);
+            }
+            return text;
+        }
 
         private static string ApplyPhraseFixes(string text)
         {
