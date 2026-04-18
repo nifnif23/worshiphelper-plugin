@@ -127,6 +127,7 @@
     <Compile Include="ThisAddIn.cs" />
     <Compile Include="ThisAddIn.Designer.cs"><DependentUpon>ThisAddIn.Designer.xml</DependentUpon></Compile>
     <Compile Include="BibleReferenceDetector.cs" />
+    <Compile Include="AutoScriptureMode.cs" />
     <Compile Include="PhoneticCorrector.cs" />
     <Compile Include="ReferenceValidator.cs" />
     <Compile Include="SpeechListener.cs" />

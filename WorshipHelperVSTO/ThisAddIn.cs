@@ -103,15 +103,16 @@ namespace WorshipHelperVSTO
                     {
                         log.Debug($"Key pressed while presenting: vkCode={vkCode}");
 
-                        // VK_CONTROL = 0x11 (17). We check both left (0xA2) and right (0xA3)
-                        // Ctrl variants as well as the generic VK_CONTROL.
+                        // VK_CONTROL = 0x11. Left (0xA2) and right (0xA3) also checked.
                         bool isCtrl = vkCode == 0x11 || vkCode == 0xA2 || vkCode == 0xA3;
+
+                        // VK_SHIFT = 0x10. Left (0xA0) and right (0xA1) also checked.
+                        // Shift toggles Auto Scripture Mode — say a reference and it inserts.
+                        bool isShift = vkCode == 0x10 || vkCode == 0xA0 || vkCode == 0xA1;
 
                         if (isCtrl)
                         {
                             log.Debug("Opening Add Content Live form");
-                            // Marshal to the UI thread — the LL hook fires on the hook thread,
-                            // not the main STA thread, so we can't show a WinForms dialog directly.
                             var mainForm = System.Windows.Forms.Application.OpenForms.Count > 0
                                 ? System.Windows.Forms.Application.OpenForms[0]
                                 : null;
@@ -124,6 +125,32 @@ namespace WorshipHelperVSTO
                             {
                                 ShowAddContentLiveForm();
                             }
+                        }
+                        else if (isShift)
+                        {
+                            // Toggle Auto Scripture Mode
+                            var mainForm = System.Windows.Forms.Application.OpenForms.Count > 0
+                                ? System.Windows.Forms.Application.OpenForms[0]
+                                : null;
+
+                            Action toggleAction = () =>
+                            {
+                                try
+                                {
+                                    bool nowOn = AutoScriptureMode.Instance.Toggle(
+                                        Globals.ThisAddIn.SpeechService);
+                                    log.Info($"Auto Scripture Mode toggled via Shift key: {(nowOn ? "ON" : "OFF")}");
+                                }
+                                catch (Exception ex)
+                                {
+                                    log.Error("Failed to toggle Auto Scripture Mode.", ex);
+                                }
+                            };
+
+                            if (mainForm != null && mainForm.InvokeRequired)
+                                mainForm.BeginInvoke(toggleAction);
+                            else
+                                toggleAction();
                         }
                     }
                 }

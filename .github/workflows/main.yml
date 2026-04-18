@@ -5,6 +5,10 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  VOSK_MODEL_URL: https://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip
+  # Change this key only when switching to a different model version.
+  # Keeping it the same means the 1.8 GB model is cached and never re-downloaded.
+  VOSK_MODEL_CACHE_KEY: vosk-model-en-us-0.22
 
 jobs:
   build:
@@ -25,11 +29,6 @@ jobs:
       - name: Restore NuGet packages
         run: nuget restore WorshipHelper.sln
 
-      # -----------------------------------------------------------------------
-      # Discover actual DLL paths after restore and export as env vars.
-      # This avoids hardcoding paths that change between NAudio sub-package
-      # versions and avoids guessing the lib/net* folder name.
-      # -----------------------------------------------------------------------
       - name: Resolve assembly HintPaths
         run: |
           $packagesDir = "$env:GITHUB_WORKSPACE\packages"
@@ -45,37 +44,49 @@ jobs:
           if (-not $naudioWinMM) { throw "NAudio.WinMM.dll not found under $packagesDir" }
           if (-not $vosk)        { throw "Vosk.dll not found under $packagesDir" }
 
-          Write-Host "NAudio.Core  -> $($naudioCore.FullName)"
-          Write-Host "NAudio.WinMM -> $($naudioWinMM.FullName)"
-          Write-Host "Vosk         -> $($vosk.FullName)"
-
           echo "NAUDIO_CORE_PATH=$($naudioCore.FullName)"   >> $env:GITHUB_ENV
           echo "NAUDIO_WINMM_PATH=$($naudioWinMM.FullName)" >> $env:GITHUB_ENV
           echo "VOSK_PATH=$($vosk.FullName)"                >> $env:GITHUB_ENV
 
       # -----------------------------------------------------------------------
-      # Download Vosk model (large ~1.8 GB, best accuracy for accented speech)
+      # Vosk model cache.
+      # Cache hit  = restore extracted folder instantly, skip download entirely.
+      # Cache miss = download 1.8 GB zip, extract, cache for every future run.
+      # The cache persists across runs until the cache key changes.
       # -----------------------------------------------------------------------
-      - name: Download Vosk speech model
+      - name: Restore Vosk model from cache
+        id: cache-vosk-model
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\WorshipHelperVSTO\data\vosk-model
+          key: ${{ env.VOSK_MODEL_CACHE_KEY }}
+
+      - name: Download Vosk model (cache miss only)
+        if: steps.cache-vosk-model.outputs.cache-hit != 'true'
         run: |
-          $modelUrl  = "https://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip"
           $modelZip  = "$env:TEMP\vosk-model.zip"
           $modelDest = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\data\vosk-model"
 
-          Write-Host "Downloading Vosk model..."
-          Invoke-WebRequest -Uri $modelUrl -OutFile $modelZip -UseBasicParsing
+          Write-Host "Cache miss — downloading Vosk model (~1.8 GB). This only happens once."
+          Invoke-WebRequest -Uri $env:VOSK_MODEL_URL -OutFile $modelZip -UseBasicParsing
 
           Write-Host "Extracting..."
           Expand-Archive -Path $modelZip -DestinationPath "$env:TEMP\vosk-extracted" -Force
 
           $inner = Get-ChildItem "$env:TEMP\vosk-extracted" | Select-Object -First 1
+          New-Item -ItemType Directory -Force -Path (Split-Path $modelDest) | Out-Null
           Move-Item -Path $inner.FullName -Destination $modelDest -Force
+          Write-Host "Done."
 
-          Write-Host "Vosk model ready at: $modelDest"
+      - name: Verify Vosk model present
+        run: |
+          $modelDest = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\data\vosk-model"
+          if (-not (Test-Path $modelDest)) {
+            throw "Vosk model not found at $modelDest"
+          }
+          $n = (Get-ChildItem $modelDest -Recurse -File).Count
+          Write-Host "Vosk model OK: $n files"
 
-      # -----------------------------------------------------------------------
-      # Certificate
-      # -----------------------------------------------------------------------
       - name: Generate self-signed certificate
         run: |
           $cert = New-SelfSignedCertificate `
@@ -96,12 +107,11 @@ jobs:
           $store.Close()
 
           echo "CERT_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
-          echo "PFX_PATH=$pfxPath" >> $env:GITHUB_ENV
+          echo "PFX_PATH=$pfxPath"                   >> $env:GITHUB_ENV
 
       - name: Stamp build version
         run: |
-          $runNumber = $env:GITHUB_RUN_NUMBER
-          $versionLine = "[assembly: AssemblyFileVersion(`"1.4.0.$runNumber`")]"
+          $versionLine = "[assembly: AssemblyFileVersion(`"1.4.0.$env:GITHUB_RUN_NUMBER`")]"
           $path = "WorshipHelperVSTO\Properties\AssemblyInfo.cs"
           $content = Get-Content $path -Raw
           $content = $content -replace '(?m)^.*AssemblyFileVersion.*\r?\n', ''
@@ -123,37 +133,22 @@ jobs:
             /p:VoskHintPath="$env:VOSK_PATH" `
             /verbosity:minimal
 
-      # -----------------------------------------------------------------------
-      # Copy NuGet runtime DLLs into bin\Release so the MSI can bundle them.
-      # Vosk ships two pieces: Vosk.dll (managed) and libvosk.dll (native C).
-      # NAudio ships as separate sub-packages. None are auto-copied by MSBuild
-      # because they're referenced via HintPath rather than normal NuGet imports.
-      # -----------------------------------------------------------------------
       - name: Copy NuGet DLLs to bin\Release
         run: |
-          $targetDir  = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\bin\Release"
+          $targetDir   = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\bin\Release"
           $packagesDir = "$env:GITHUB_WORKSPACE\packages"
 
-          # Managed wrappers (already resolved in earlier step)
-          Copy-Item $env:VOSK_PATH        $targetDir -Force
-          Copy-Item $env:NAUDIO_CORE_PATH $targetDir -Force
+          Copy-Item $env:VOSK_PATH         $targetDir -Force
+          Copy-Item $env:NAUDIO_CORE_PATH  $targetDir -Force
           Copy-Item $env:NAUDIO_WINMM_PATH $targetDir -Force
 
-          # libvosk.dll and its MinGW runtime dependencies
-          # (libgcc_s_seh-1.dll, libstdc++-6.dll, libwinpthread-1.dll)
-          # all ship in the same lib\ folder as Vosk.dll in the NuGet package.
-          # Copy every .dll from that folder to cover all of them.
           $voskDir = Split-Path $env:VOSK_PATH -Parent
           if (-not (Test-Path (Join-Path $voskDir "libvosk.dll"))) {
-            # Fallback: find libvosk.dll anywhere in the package and use its folder
-            $found = Get-ChildItem "$packagesDir\Vosk.*" -Recurse -Filter "libvosk.dll" |
-              Select-Object -First 1
-            if (-not $found) { throw "libvosk.dll not found in NuGet packages" }
+            $found = Get-ChildItem "$packagesDir\Vosk.*" -Recurse -Filter "libvosk.dll" | Select-Object -First 1
+            if (-not $found) { throw "libvosk.dll not found" }
             $voskDir = $found.DirectoryName
           }
-          Write-Host "Copying all native DLLs from: $voskDir"
           Get-ChildItem $voskDir -Filter "*.dll" | ForEach-Object {
-            Write-Host "  -> $($_.Name)"
             Copy-Item $_.FullName $targetDir -Force
           }
 
@@ -183,41 +178,24 @@ jobs:
           foreach ($ref in $refs) { $ref.ParentNode.RemoveChild($ref) | Out-Null }
           $xml.Save((Resolve-Path $wixproj))
 
-      # -----------------------------------------------------------------------
-      # Harvest the vosk-model directory into a WiX fragment so the MSI
-      # bundles the model and users don't need to download it separately.
-      # -----------------------------------------------------------------------
       - name: Harvest Vosk model into WiX fragment
         run: |
-          $heatExe = Get-ChildItem "$env:WIX\bin" -Filter "heat.exe" | Select-Object -First 1 -ExpandProperty FullName
+          $heatExe  = Get-ChildItem "$env:WIX\bin" -Filter "heat.exe" | Select-Object -First 1 -ExpandProperty FullName
           $modelDir = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\bin\Release\data\vosk-model"
           $outFile  = "$env:GITHUB_WORKSPACE\WorshipHelperSetup\VoskModel.wxs"
 
-          & $heatExe dir $modelDir `
-            -nologo `
-            -sfrag `
-            -srd `
-            -sreg `
-            -gg `
-            -cg VoskModelFiles `
-            -dr VOSK_MODEL_DIR `
-            -out $outFile
+          & $heatExe dir $modelDir -nologo -sfrag -srd -sreg -gg -cg VoskModelFiles -dr VOSK_MODEL_DIR -out $outFile
 
-          # heat emits Source="SourceDir\..." when no -var is used.
-          # Replace that placeholder with the real absolute path.
           $raw = Get-Content $outFile -Raw
           $raw = $raw.Replace('SourceDir\', "$modelDir\")
           Set-Content $outFile $raw -Encoding UTF8
 
-          Write-Host "Generated: $outFile"
-
-          # Add VoskModel.wxs to the .wixproj so MSBuild compiles it
           $wixproj = "WorshipHelperSetup\WorshipHelperSetup.wixproj"
           [xml]$xml = Get-Content $wixproj
-          $ns  = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
+          $ns = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
           $ns.AddNamespace("ms", "http://schemas.microsoft.com/developer/msbuild/2003")
-          $ig  = $xml.SelectSingleNode("//ms:ItemGroup[ms:Compile]", $ns)
-          $el  = $xml.CreateElement("Compile", "http://schemas.microsoft.com/developer/msbuild/2003")
+          $ig = $xml.SelectSingleNode("//ms:ItemGroup[ms:Compile]", $ns)
+          $el = $xml.CreateElement("Compile", "http://schemas.microsoft.com/developer/msbuild/2003")
           $el.SetAttribute("Include", "VoskModel.wxs")
           $ig.AppendChild($el) | Out-Null
           $xml.Save((Resolve-Path $wixproj))
