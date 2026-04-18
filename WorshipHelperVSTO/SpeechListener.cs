@@ -316,15 +316,24 @@ namespace WorshipHelperVSTO
         // -------------------------------------------------------------------------
 
         /// <summary>
-        /// Builds a JSON word-list that constrains Vosk to only Bible-relevant
-        /// vocabulary.  Without this, Vosk maps "Zechariah" phonemes to random
-        /// English words ("zachariah night birth a to her").
+        /// Builds a JSON word-list that constrains Vosk to only scripture-relevant
+        /// vocabulary.
         ///
-        /// "[unk]" is included so that off-topic speech produces an [unk] token
-        /// instead of a false-positive book name match.
+        /// Design decisions:
         ///
-        /// Digit strings ("1"–"176") are included because Vosk sometimes outputs
-        /// them even in grammar mode, and WordsToNumber already handles them.
+        /// 1. PREAMBLE WORDS REMOVED — words like "read", "turn", "open", "today"
+        ///    were in the original grammar to handle spoken preamble ("let's turn to
+        ///    John 3:16"). However they give Vosk more phoneme targets to land on,
+        ///    causing mishearings. The BibleReferenceDetector strips preamble anyway.
+        ///    Removing them forces Vosk to commit to [unk] for non-scripture speech,
+        ///    which is the desired behaviour (suppresses false references).
+        ///
+        /// 2. PHONETIC NEAR-MISSES ADDED — common mishearings that PhoneticCorrector
+        ///    knows how to fix. Including them in the grammar means Vosk outputs the
+        ///    near-miss directly (which we then correct) instead of something totally
+        ///    unrelated. e.g. "night" for "nine", "heaven" for "seven", "tea" for "three".
+        ///
+        /// 3. [unk] RETAINED — essential escape hatch for off-topic speech.
         /// </summary>
         private static string BuildBibleGrammar()
         {
@@ -395,7 +404,7 @@ namespace WorshipHelperVSTO
                 "i","ii","iii",
                 "of",   // "song of solomon"
 
-                // ── Number words ───────────────────────────────────────────────
+                // ── Number words (canonical) ───────────────────────────────────
                 "zero","oh","o",
                 "one","two","three","four","five",
                 "six","seven","eight","nine","ten",
@@ -405,22 +414,36 @@ namespace WorshipHelperVSTO
                 "sixty","seventy","eighty","ninety",
                 "hundred",
 
+                // ── Phonetic near-misses for number words ──────────────────────
+                // These are the words Vosk outputs when it mishears number words.
+                // PhoneticCorrector maps them back. Including them here ensures
+                // Vosk at least outputs SOMETHING we can fix, rather than [unk].
+                "night",    // → nine   (/naɪt/ ≈ /naɪn/)
+                "tea",      // → three  (/tiː/ ≈ /θriː/)
+                "tree",     // → three
+                "free",     // → three  (f/th confusion)
+                "heaven",   // → seven  (h+even ≈ s+even)
+                "fore",     // → four
+                "sex",      // → six    (/sɛks/ ≈ /sɪks/)
+                "ate",      // → eight  (homophone)
+                "won",      // → one    (homophone)
+                "too",      // → two    (homophone)
+                "fight",    // → used in "fight for" → four
+
                 // ── Reference connector / structure words ──────────────────────
                 "chapter","chapters",
                 "verse","verses",
                 "through","to","and","colon","dash","hyphen",
 
-                // ── Common preamble / filler words ────────────────────────────
-                "read","reading","turn","turning","open","opening",
-                "look","looking","go","going","find","finding",
-                "let","lets","us","please","now","okay","ok",
-                "the","book","passage","scripture","text",
-                "today","tonight","this","morning","evening",
-                "says","we're","i'm","from","at","in",
+                // ── Minimal preamble — only the highest-signal words kept ──────
+                // Removed: "read","turn","open","look","go","find","let","lets",
+                //          "us","please","now","okay","ok","the","book","passage",
+                //          "text","today","tonight","this","morning","evening",
+                //          "says","we're","i'm","from","at","in"
+                // These had no detection value and gave Vosk extra false targets.
+                "scripture",  // keep — unambiguous signal of intent
 
                 // ── Unknown-word escape hatch ──────────────────────────────────
-                // Without this Vosk forces every phoneme into our vocabulary,
-                // causing false positives from non-Bible speech.
                 "[unk]",
             };
 
