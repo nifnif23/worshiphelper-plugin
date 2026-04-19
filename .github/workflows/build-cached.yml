@@ -1,10 +1,12 @@
-name: Build WorshipHelper MSI (No Model Download)
+name: Build WorshipHelper MSI (Cached Model)
 
 on:
   workflow_dispatch:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  VOSK_MODEL_URL: https://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip
+  VOSK_MODEL_CACHE_KEY: vosk-model-en-us-0.22
 
 jobs:
   build:
@@ -43,6 +45,39 @@ jobs:
           echo "NAUDIO_CORE_PATH=$($naudioCore.FullName)"   >> $env:GITHUB_ENV
           echo "NAUDIO_WINMM_PATH=$($naudioWinMM.FullName)" >> $env:GITHUB_ENV
           echo "VOSK_PATH=$($vosk.FullName)"                >> $env:GITHUB_ENV
+
+      # -----------------------------------------------------------------------
+      # Cache hit  = instant restore, no download
+      # Cache miss = download once, cache for every future run
+      # To force a fresh download, change VOSK_MODEL_CACHE_KEY above
+      # -----------------------------------------------------------------------
+      - name: Restore Vosk model from cache
+        id: cache-vosk-model
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\WorshipHelperVSTO\data\vosk-model
+          key: ${{ env.VOSK_MODEL_CACHE_KEY }}
+
+      - name: Download Vosk model (cache miss only)
+        if: steps.cache-vosk-model.outputs.cache-hit != 'true'
+        run: |
+          $modelZip  = "$env:TEMP\vosk-model.zip"
+          $modelDest = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\data\vosk-model"
+
+          Write-Host "Cache miss — downloading (~1.8 GB). Won't happen again unless cache key changes."
+          Invoke-WebRequest -Uri $env:VOSK_MODEL_URL -OutFile $modelZip -UseBasicParsing
+
+          Expand-Archive -Path $modelZip -DestinationPath "$env:TEMP\vosk-extracted" -Force
+          $inner = Get-ChildItem "$env:TEMP\vosk-extracted" | Select-Object -First 1
+          New-Item -ItemType Directory -Force -Path (Split-Path $modelDest) | Out-Null
+          Move-Item -Path $inner.FullName -Destination $modelDest -Force
+          Write-Host "Done."
+
+      - name: Verify Vosk model present
+        run: |
+          $modelDest = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\data\vosk-model"
+          if (-not (Test-Path $modelDest)) { throw "Vosk model not found at $modelDest" }
+          Write-Host "Vosk model OK: $((Get-ChildItem $modelDest -Recurse -File).Count) files"
 
       - name: Generate self-signed certificate
         run: |
@@ -125,13 +160,6 @@ jobs:
             /p:VoskHintPath="$env:VOSK_PATH" `
             /verbosity:normal
 
-      - name: Patch Product.wxs to remove VoskModelFiles reference
-        run: |
-          $wxs = "WorshipHelperSetup\Product.wxs"
-          $content = Get-Content $wxs -Raw
-          $content = $content -replace '\s*<ComponentGroupRef Id="VoskModelFiles"\s*/>', ''
-          Set-Content $wxs $content -NoNewline
-
       - name: Remove VSTO project reference from WiX project
         run: |
           $wixproj = "WorshipHelperSetup\WorshipHelperSetup.wixproj"
@@ -142,13 +170,38 @@ jobs:
           foreach ($ref in $refs) { $ref.ParentNode.RemoveChild($ref) | Out-Null }
           $xml.Save((Resolve-Path $wixproj))
 
-      # -----------------------------------------------------------------------
-      # No model harvesting — the existing installation already has the model.
-      # We just build and publish the updated VSTO DLL. The MSI update will
-      # overwrite the add-in files without touching the vosk-model directory.
-      # -----------------------------------------------------------------------
 
-      - name: Build MSI (no model)
+      - name: Copy Vosk model to bin\Release
+        run: |
+          $src  = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\data\vosk-model"
+          $dest = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\bin\Release\data\vosk-model"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Copy-Item -Path "$src\*" -Destination $dest -Recurse -Force
+          Write-Host "Model copied: $((Get-ChildItem $dest -Recurse -File).Count) files"
+
+      - name: Harvest Vosk model into WiX fragment
+        run: |
+          $heatExe  = Get-ChildItem "$env:WIX\bin" -Filter "heat.exe" | Select-Object -First 1 -ExpandProperty FullName
+          $modelDir = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\bin\Release\data\vosk-model"
+          $outFile  = "$env:GITHUB_WORKSPACE\WorshipHelperSetup\VoskModel.wxs"
+
+          & $heatExe dir $modelDir -nologo -sfrag -srd -sreg -gg -cg VoskModelFiles -dr VOSK_MODEL_DIR -out $outFile
+
+          $raw = Get-Content $outFile -Raw
+          $raw = $raw.Replace('SourceDir\', "$modelDir\")
+          Set-Content $outFile $raw -Encoding UTF8
+
+          $wixproj = "WorshipHelperSetup\WorshipHelperSetup.wixproj"
+          [xml]$xml = Get-Content $wixproj
+          $ns = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
+          $ns.AddNamespace("ms", "http://schemas.microsoft.com/developer/msbuild/2003")
+          $ig = $xml.SelectSingleNode("//ms:ItemGroup[ms:Compile]", $ns)
+          $el = $xml.CreateElement("Compile", "http://schemas.microsoft.com/developer/msbuild/2003")
+          $el.SetAttribute("Include", "VoskModel.wxs")
+          $ig.AppendChild($el) | Out-Null
+          $xml.Save((Resolve-Path $wixproj))
+
+      - name: Build MSI
         run: |
           $targetDir = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\bin\Release\"
           msbuild WorshipHelperSetup\WorshipHelperSetup.wixproj `
