@@ -304,51 +304,10 @@ namespace WorshipHelperVSTO
 //
 // In your TestRibbonItem.cs (or a new ribbon), add a button handler:
 
-namespace WorshipHelperVSTO
-{
-    public partial class TestRibbonItem
-    {
-        // ── Auto Scripture Mode toggle ────────────────────────────────────────
-        // Wired to the existing btnToggleSpeech button in the ribbon designer.
-        // When Auto Scripture Mode is ON, speech is active and any detected
-        // reference is inserted immediately without any UI interaction.
-        // Shift key in presenter view also toggles this mode.
-        //
-        // The existing btnToggleSpeech_Click in TestRibbonItem.cs handles basic
-        // listen on/off. This handler layers Auto Scripture Mode on top of it.
-
-        private void btnAutoScripture_Click(object sender, Microsoft.Office.Tools.Ribbon.RibbonControlEventArgs e)
-        {
-            try
-            {
-                var service = Globals.ThisAddIn.SpeechService;
-                bool nowOn = AutoScriptureMode.Instance.Toggle(service);
-
-                var btn = sender as Microsoft.Office.Tools.Ribbon.RibbonToggleButton;
-                if (btn != null)
-                {
-                    btn.Label   = nowOn ? "⚡ Auto ON" : "⚡ Auto Scripture";
-                    btn.Checked = nowOn;
-                }
-
-                // Keep the existing speech toggle button in sync
-                if (nowOn && service?.IsListening == true)
-                {
-                    btnToggleSpeech.Image = global::WorshipHelperVSTO.Properties.Resources.mic_active;
-                    btnToggleSpeech.Label = "Listening...";
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Windows.Forms.MessageBox.Show(
-                    $"Error toggling Auto Scripture Mode:\n\n{ex.Message}",
-                    "Error",
-                    System.Windows.Forms.MessageBoxButtons.OK,
-                    System.Windows.Forms.MessageBoxIcon.Error);
-            }
-        }
-    }
-}
+// NOTE: btnAutoScripture_Click moved into TestRibbonItem.cs so all ribbon
+// click handlers live next to each other and can share state (including
+// the AutoScriptureMode.StateChanged subscription that keeps the toggle
+// in sync with the Shift hotkey).
 
 
 // ═══════════════════════════════════════════════════════════════════════════

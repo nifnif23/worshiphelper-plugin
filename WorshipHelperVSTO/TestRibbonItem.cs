@@ -38,9 +38,49 @@ namespace WorshipHelperVSTO
                     _speechService.OnRawSpeech         += OnRawSpeech;
                     if (_speechService.Listener != null)
                         _speechService.Listener.PhaseChanged += OnPhaseChanged;
+
+                    // Keep the Auto Scripture ribbon button in sync with the
+                    // mode state — the Shift hotkey in presenter view can
+                    // also flip it, so we can't rely on button clicks alone.
+                    AutoScriptureMode.Instance.StateChanged += OnAutoScriptureStateChanged;
                 }
                 return _speechService;
             }
+        }
+
+        /// <summary>
+        /// Called on a background thread when AutoScriptureMode is enabled
+        /// or disabled (ribbon button, Shift hotkey, or programmatic). Marshals
+        /// to the UI thread before updating the toggle button's checked state
+        /// and label.
+        /// </summary>
+        private void OnAutoScriptureStateChanged(object sender, bool nowOn)
+        {
+            _uiContext?.Post(_ =>
+            {
+                try
+                {
+                    if (btnAutoScripture != null)
+                    {
+                        btnAutoScripture.Checked = nowOn;
+                        btnAutoScripture.Label   = nowOn ? "⚡ Auto ON" : "⚡ Auto Scripture";
+                    }
+
+                    // When auto mode turns on the service starts listening,
+                    // so reflect that on the Listen button too.
+                    if (nowOn && _speechService?.IsListening == true)
+                    {
+                        btnToggleSpeech.Image   = global::WorshipHelperVSTO.Properties.Resources.mic_active;
+                        btnToggleSpeech.Label   = "Listening...";
+                        btnToggleSpeech.Checked = true;
+                    }
+                }
+                catch (System.Exception ex)
+                {
+                    log4net.LogManager.GetLogger(typeof(TestRibbonItem))
+                        .Debug($"OnAutoScriptureStateChanged UI update failed: {ex.Message}");
+                }
+            }, null);
         }
 
         private void OnPhaseChanged(object sender, SpeechPhaseChangedEventArgs e)
@@ -285,6 +325,10 @@ namespace WorshipHelperVSTO
                     btnToggleSpeech.Label = "Listen";
                     // Turning off listening also kills auto scripture mode
                     AutoScriptureMode.Instance.Disable();
+                    // … and drops any pending chapter-only reference so we
+                    // don't fire something stale 10 seconds after the mic
+                    // was muted.
+                    _speechService?.CancelPendingReference();
                 }
 
                 if (_debugPanel != null && !_debugPanel.IsDisposed)
@@ -423,6 +467,61 @@ namespace WorshipHelperVSTO
         private void btnSelfTest_Click(object sender, RibbonControlEventArgs e)
         {
             new SelfTestManager().SelfTest();
+        }
+
+        // ──────────────────────────────────────────────────────────────────────────────────────
+        // Auto Scripture Mode toggle
+        //
+        // When ON, any Bible reference detected from speech is inserted
+        // immediately with no confirmation popup. Handy when the listener
+        // has already earned your trust for a particular service.
+        //
+        // The same mode is also toggled by the Shift hotkey in presenter
+        // view (see ThisAddIn.KeyboardHookCallback) — the button stays in
+        // sync via AutoScriptureMode.StateChanged, which is wired up inside
+        // the SpeechService property getter above.
+        // ──────────────────────────────────────────────────────────────────────────────────────
+        private void btnAutoScripture_Click(object sender, RibbonControlEventArgs e)
+        {
+            try
+            {
+                // Make sure the service exists and our state-changed subscription
+                // is wired up before we toggle.
+                var service = SpeechService;
+                bool nowOn = AutoScriptureMode.Instance.Toggle(service);
+
+                // OnAutoScriptureStateChanged will also update the button, but
+                // setting it here gives immediate feedback without waiting for
+                // the event to round-trip through the sync context.
+                btnAutoScripture.Checked = nowOn;
+                btnAutoScripture.Label   = nowOn ? "⚡ Auto ON" : "⚡ Auto Scripture";
+
+                if (nowOn && service?.IsListening == true)
+                {
+                    btnToggleSpeech.Image   = global::WorshipHelperVSTO.Properties.Resources.mic_active;
+                    btnToggleSpeech.Label   = "Listening...";
+                    btnToggleSpeech.Checked = true;
+                }
+            }
+            catch (System.IO.DirectoryNotFoundException ex)
+            {
+                System.Windows.Forms.MessageBox.Show(
+                    ex.Message + "\n\nDownload a Vosk model from https://alphacephei.com/vosk/models " +
+                    "and extract it to the path shown above.",
+                    "Vosk Model Not Found",
+                    System.Windows.Forms.MessageBoxButtons.OK,
+                    System.Windows.Forms.MessageBoxIcon.Warning);
+                btnAutoScripture.Checked = false;
+                btnAutoScripture.Label   = "⚡ Auto Scripture";
+            }
+            catch (System.Exception ex)
+            {
+                System.Windows.Forms.MessageBox.Show(
+                    $"Error toggling Auto Scripture Mode:\n\n{ex.Message}",
+                    "Error",
+                    System.Windows.Forms.MessageBoxButtons.OK,
+                    System.Windows.Forms.MessageBoxIcon.Error);
+            }
         }
     }
 }

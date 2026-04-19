@@ -56,6 +56,17 @@ namespace WorshipHelperVSTO
         /// </summary>
         public bool IsEnabled { get; private set; }
 
+        /// <summary>
+        /// Raised whenever <see cref="IsEnabled"/> changes. Lets the ribbon
+        /// toggle button stay in sync regardless of how the mode was changed
+        /// (ribbon button, Shift-hotkey in presenter view, programmatic
+        /// disable when listening is turned off, etc.).
+        ///
+        /// Subscribers may be called on a background thread — marshal to the
+        /// UI thread before touching ribbon state.
+        /// </summary>
+        public event EventHandler<bool> StateChanged;
+
         // -----------------------------------------------------------------------
         // Public API
         // -----------------------------------------------------------------------
@@ -79,11 +90,13 @@ namespace WorshipHelperVSTO
                 {
                     log.Error("AutoScriptureMode: Failed to start speech service.", ex);
                     IsEnabled = false;
+                    RaiseStateChanged(false);
                     return;
                 }
             }
 
             ShowToast("Auto Scripture ON — listening for references", durationMs: 2500);
+            RaiseStateChanged(true);
         }
 
         /// <summary>
@@ -96,6 +109,16 @@ namespace WorshipHelperVSTO
             IsEnabled = false;
             log.Info("AutoScriptureMode: Disabled.");
             ShowToast("Auto Scripture OFF", durationMs: 1500);
+            RaiseStateChanged(false);
+        }
+
+        private void RaiseStateChanged(bool newState)
+        {
+            try { StateChanged?.Invoke(this, newState); }
+            catch (Exception ex)
+            {
+                log.Debug($"AutoScriptureMode: StateChanged subscriber threw: {ex.Message}");
+            }
         }
 
         /// <summary>

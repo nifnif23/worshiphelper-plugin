@@ -79,6 +79,7 @@ namespace WorshipHelperVSTO
             this.btnAddFavourite = this.Factory.CreateRibbonButton();
             this.grpSpeech = this.Factory.CreateRibbonGroup();
             this.btnToggleSpeech = this.Factory.CreateRibbonToggleButton();
+            this.btnAutoScripture = this.Factory.CreateRibbonToggleButton();
             this.btnMonitorSpeech = this.Factory.CreateRibbonButton();
             this.btnSpeechTemplate = this.Factory.CreateRibbonButton();
             this.grpDebug = this.Factory.CreateRibbonGroup();
@@ -141,6 +142,7 @@ namespace WorshipHelperVSTO
             // grpSpeech
             // 
             this.grpSpeech.Items.Add(this.btnToggleSpeech);
+            this.grpSpeech.Items.Add(this.btnAutoScripture);
             this.grpSpeech.Items.Add(this.btnMonitorSpeech);
             this.grpSpeech.Items.Add(this.btnSpeechTemplate);
             this.grpSpeech.Label = "Speech";
@@ -154,6 +156,21 @@ namespace WorshipHelperVSTO
             this.btnToggleSpeech.Name = "btnToggleSpeech";
             this.btnToggleSpeech.ShowImage = true;
             this.btnToggleSpeech.Click += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.btnToggleSpeech_Click);
+            // 
+            // btnAutoScripture
+            // 
+            // Ribbon toggle for Auto Scripture Mode. When ON, any detected
+            // reference is inserted immediately with no confirmation toast.
+            // The same toggle also responds to the Shift hotkey in presenter
+            // view via AutoScriptureMode.StateChanged.
+            this.btnAutoScripture.ControlSize = Microsoft.Office.Core.RibbonControlSize.RibbonControlSizeLarge;
+            this.btnAutoScripture.Image = global::WorshipHelperVSTO.Properties.Resources.mic_active;
+            this.btnAutoScripture.Label = "⚡ Auto Scripture";
+            this.btnAutoScripture.Name = "btnAutoScripture";
+            this.btnAutoScripture.ShowImage = true;
+            this.btnAutoScripture.ScreenTip = "Auto Scripture Mode";
+            this.btnAutoScripture.SuperTip = "When on, any Bible reference detected in speech is inserted immediately with no confirmation popup. Handy when you already trust the listener to get things right.";
+            this.btnAutoScripture.Click += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.btnAutoScripture_Click);
             // 
             // btnMonitorSpeech
             // 
@@ -211,6 +228,7 @@ namespace WorshipHelperVSTO
         internal Microsoft.Office.Tools.Ribbon.RibbonButton btnAddFavourite;
         internal Microsoft.Office.Tools.Ribbon.RibbonGroup grpSpeech;
         internal Microsoft.Office.Tools.Ribbon.RibbonToggleButton btnToggleSpeech;
+        internal Microsoft.Office.Tools.Ribbon.RibbonToggleButton btnAutoScripture;
         internal Microsoft.Office.Tools.Ribbon.RibbonButton btnMonitorSpeech;
         internal Microsoft.Office.Tools.Ribbon.RibbonButton btnSpeechTemplate;
         internal RibbonGroup grpDebug;

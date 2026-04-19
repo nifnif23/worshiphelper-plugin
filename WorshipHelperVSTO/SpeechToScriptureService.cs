@@ -109,6 +109,21 @@ namespace WorshipHelperVSTO
         private Timer _cleanupTimer;
 
         // -----------------------------------------------------------------------
+        // Chapter-only debounce state
+        //
+        // When a chapter-only reference is detected (e.g. "Psalms 23"), we
+        // hold it for ChapterOnlyGraceMs in case the verse is about to be
+        // announced. The pending entry is guarded by _pendingLock — never
+        // read or write any _pending* field outside that lock.
+        // -----------------------------------------------------------------------
+        private readonly object _pendingLock = new object();
+        private DetectedReference _pendingDetection; // chapter-only, awaiting possible verse
+        private float _pendingSpeechConfidence;
+        private string _pendingSpokenText;
+        private int _pendingChapterNumber;           // parsed chapter of the pending reference
+        private System.Threading.Timer _pendingTimer;
+
+        // -----------------------------------------------------------------------
         // Configuration
         // -----------------------------------------------------------------------
 
@@ -119,6 +134,28 @@ namespace WorshipHelperVSTO
         /// Default: 30 seconds.
         /// </summary>
         public int DuplicateCooldownSeconds { get; set; } = 30;
+
+        /// <summary>
+        /// How long (in milliseconds) to hold a chapter-only reference back
+        /// in case a verse number arrives in a following utterance.
+        ///
+        /// Ministers often speak scripture references slowly, with a noticeable
+        /// pause between the chapter and the verse:
+        ///     "Let's turn to Psalm twenty-three ... verse four."
+        ///
+        /// Without this grace window, the first utterance ("Psalm 23") would
+        /// fire immediately and the presenter would get the whole chapter on
+        /// screen just as the verse was being announced.
+        ///
+        /// If a chapter:verse reference is detected during the grace period
+        /// for the same book+chapter, the pending chapter-only is cancelled
+        /// and the fuller reference fires instead. If nothing arrives before
+        /// the timer elapses, the chapter-only reference is released as-is.
+        ///
+        /// Default: 10000ms (10 seconds). Set to 0 to disable debouncing and
+        /// fire chapter-only references immediately (legacy behaviour).
+        /// </summary>
+        public int ChapterOnlyGraceMs { get; set; } = 10_000;
 
         /// <summary>
         /// Minimum combined confidence required for a detection to fire the event.
@@ -218,6 +255,7 @@ namespace WorshipHelperVSTO
         public void Stop()
         {
             log.Info("SpeechToScriptureService: Stopping…");
+            CancelPendingReference();
             _listener.Stop();
 
             RaiseStatus("Speech listening stopped.", isListening: false);
@@ -278,6 +316,21 @@ namespace WorshipHelperVSTO
 
                 // Step 1: Run Bible reference detection
                 var detected = BibleReferenceDetector.DetectBest(e.Text);
+
+                // Step 1a: Chapter-only debounce — if we have a pending
+                // chapter-only reference from a previous utterance, try to
+                // upgrade it by splicing this new text onto the pending
+                // book/chapter context (e.g. the minister's follow-up
+                // "verse four" after saying "Psalm twenty-three").
+                if (detected == null || !detected.ReferenceFragment.Contains(":"))
+                {
+                    if (TryUpgradePendingWithFollowUp(e))
+                    {
+                        // The upgrade path already fired the richer reference.
+                        return;
+                    }
+                }
+
                 if (detected == null)
                 {
                     log.Debug("Pipeline: No Bible reference detected.");
@@ -340,36 +393,334 @@ namespace WorshipHelperVSTO
                     return;
                 }
 
-                // Step 3: Duplicate suppression
-                string refKey = detected.NormalisedReference;
-                lock (_recentLock)
+                // Step 3: Chapter-only debounce.
+                //
+                // Ministers read slowly — they often say the chapter, pause,
+                // then announce the verse. Firing the chapter-only reference
+                // on the first utterance would show the whole chapter on
+                // screen just as the verse number is being spoken.
+                //
+                // So: if this detection is chapter-only, stash it and wait
+                // ChapterOnlyGraceMs for a verse to arrive. If a chapter:verse
+                // detection lands first, cancel the pending and fire the
+                // richer one. If the timer elapses, release the chapter-only.
+                bool hasVerse = detected.ReferenceFragment != null
+                                && detected.ReferenceFragment.Contains(":");
+
+                if (!hasVerse && ChapterOnlyGraceMs > 0)
                 {
-                    if (_recentReferences.TryGetValue(refKey, out DateTime lastTime))
-                    {
-                        if ((DateTime.UtcNow - lastTime).TotalSeconds < DuplicateCooldownSeconds)
-                        {
-                            log.Debug($"Pipeline: Duplicate suppressed for \"{refKey}\" (cooldown={DuplicateCooldownSeconds}s).");
-                            return;
-                        }
-                    }
-                    _recentReferences[refKey] = DateTime.UtcNow;
+                    StashPendingChapterOnly(detected, e.Text, e.Confidence);
+                    return;
                 }
 
-                // Step 4: Fire the event!
-                log.Info($"Pipeline: Firing OnReferenceDetected → \"{detected.NormalisedReference}\"");
-
-                OnReferenceDetected?.Invoke(this, new ReferenceDetectedEventArgs
+                // We have a chapter:verse reference. If a pending chapter-only
+                // is waiting for the same book+chapter, it's now superseded
+                // — drop it without firing.
+                if (hasVerse)
                 {
-                    NormalisedReference = detected.NormalisedReference,
-                    BookName = detected.BookName,
-                    ReferenceFragment = detected.ReferenceFragment,
-                    SpokenText = e.Text,
-                    Confidence = combined,
-                });
+                    DiscardPendingIfMatches(detected);
+                }
+
+                FireDetection(detected, e.Text, e.Confidence);
             }
             catch (Exception ex)
             {
                 log.Error("Pipeline: Unhandled exception in speech processing.", ex);
+            }
+        }
+
+        /// <summary>
+        /// Fires the OnReferenceDetected event after applying duplicate
+        /// suppression and confidence threshold checks. Shared by the
+        /// immediate-fire path and the pending-release path.
+        /// </summary>
+        private void FireDetection(DetectedReference detected, string spokenText, float speechConfidence)
+        {
+            if (detected == null) return;
+
+            double combined = (speechConfidence * 0.4) + (detected.Confidence * 0.6);
+            if (combined < MinCombinedConfidence)
+            {
+                log.Debug($"Pipeline: Combined confidence {combined:F2} below threshold {MinCombinedConfidence:F2}, ignoring.");
+                return;
+            }
+
+            string refKey = detected.NormalisedReference;
+            lock (_recentLock)
+            {
+                if (_recentReferences.TryGetValue(refKey, out DateTime lastTime))
+                {
+                    if ((DateTime.UtcNow - lastTime).TotalSeconds < DuplicateCooldownSeconds)
+                    {
+                        log.Debug($"Pipeline: Duplicate suppressed for \"{refKey}\" (cooldown={DuplicateCooldownSeconds}s).");
+                        return;
+                    }
+                }
+                _recentReferences[refKey] = DateTime.UtcNow;
+            }
+
+            log.Info($"Pipeline: Firing OnReferenceDetected → \"{detected.NormalisedReference}\"");
+
+            OnReferenceDetected?.Invoke(this, new ReferenceDetectedEventArgs
+            {
+                NormalisedReference = detected.NormalisedReference,
+                BookName            = detected.BookName,
+                ReferenceFragment   = detected.ReferenceFragment,
+                SpokenText          = spokenText,
+                Confidence          = combined,
+            });
+        }
+
+        // -----------------------------------------------------------------------
+        // Chapter-only debounce helpers
+        // -----------------------------------------------------------------------
+
+        /// <summary>
+        /// Parses the leading chapter number out of a reference fragment
+        /// like "23" or "23:4-7". Returns 0 if it can't be parsed.
+        /// </summary>
+        private static int ParseChapterNumber(string refFragment)
+        {
+            if (string.IsNullOrEmpty(refFragment)) return 0;
+            int split = refFragment.IndexOfAny(new[] { ':', '-' });
+            string chapterPart = split < 0 ? refFragment : refFragment.Substring(0, split);
+            return int.TryParse(chapterPart.Trim(), out int n) ? n : 0;
+        }
+
+        /// <summary>
+        /// Stores a chapter-only detection as "pending" and (re)starts the
+        /// grace-period timer. If a previous pending exists for a DIFFERENT
+        /// book/chapter, that one is released immediately — the minister
+        /// has clearly moved on to a new reference.
+        /// </summary>
+        private void StashPendingChapterOnly(DetectedReference detected, string spokenText, float speechConfidence)
+        {
+            DetectedReference toReleaseNow = null;
+            string            releaseSpoken = null;
+            float             releaseConf   = 0f;
+
+            int incomingChapter = ParseChapterNumber(detected.ReferenceFragment);
+
+            lock (_pendingLock)
+            {
+                if (_pendingDetection != null)
+                {
+                    bool sameTarget = string.Equals(
+                            _pendingDetection.BookName,
+                            detected.BookName,
+                            StringComparison.OrdinalIgnoreCase)
+                        && _pendingChapterNumber == incomingChapter;
+
+                    if (!sameTarget)
+                    {
+                        // Minister has moved on — release the previous pending
+                        // so we don't silently drop it. Stash the new one.
+                        toReleaseNow = _pendingDetection;
+                        releaseSpoken = _pendingSpokenText;
+                        releaseConf   = _pendingSpeechConfidence;
+                    }
+                    // Else: same book+chapter restated; just reset the timer below.
+                }
+
+                _pendingDetection        = detected;
+                _pendingSpokenText       = spokenText;
+                _pendingSpeechConfidence = speechConfidence;
+                _pendingChapterNumber    = incomingChapter;
+
+                _pendingTimer?.Dispose();
+                _pendingTimer = new System.Threading.Timer(
+                    OnPendingGraceExpired,
+                    state: null,
+                    dueTime: ChapterOnlyGraceMs,
+                    period: System.Threading.Timeout.Infinite);
+            }
+
+            log.Debug($"Pipeline: Holding chapter-only \"{detected.NormalisedReference}\" " +
+                      $"for up to {ChapterOnlyGraceMs}ms in case a verse follows.");
+
+            if (toReleaseNow != null)
+            {
+                log.Info($"Pipeline: Releasing previous pending \"{toReleaseNow.NormalisedReference}\" " +
+                          "(superseded by a different reference).");
+                FireDetection(toReleaseNow, releaseSpoken, releaseConf);
+            }
+        }
+
+        /// <summary>
+        /// If the pending chapter-only reference matches the incoming
+        /// chapter:verse reference (same book + same chapter), discard the
+        /// pending — it's about to be superseded by something richer.
+        /// </summary>
+        private void DiscardPendingIfMatches(DetectedReference richer)
+        {
+            int richerChapter = ParseChapterNumber(richer.ReferenceFragment);
+
+            lock (_pendingLock)
+            {
+                if (_pendingDetection == null) return;
+
+                bool sameTarget = string.Equals(
+                        _pendingDetection.BookName,
+                        richer.BookName,
+                        StringComparison.OrdinalIgnoreCase)
+                    && _pendingChapterNumber == richerChapter;
+
+                if (!sameTarget) return;
+
+                log.Debug($"Pipeline: Pending \"{_pendingDetection.NormalisedReference}\" " +
+                          $"upgraded to \"{richer.NormalisedReference}\".");
+
+                _pendingDetection = null;
+                _pendingSpokenText = null;
+                _pendingSpeechConfidence = 0f;
+                _pendingChapterNumber = 0;
+                _pendingTimer?.Dispose();
+                _pendingTimer = null;
+            }
+        }
+
+        /// <summary>
+        /// Called on a background thread when ChapterOnlyGraceMs elapses
+        /// without any follow-up verse. Releases the pending chapter-only
+        /// reference as the minister's intended insertion.
+        /// </summary>
+        private void OnPendingGraceExpired(object state)
+        {
+            DetectedReference detected;
+            string spokenText;
+            float  speechConfidence;
+
+            lock (_pendingLock)
+            {
+                if (_pendingDetection == null) return;
+
+                detected         = _pendingDetection;
+                spokenText       = _pendingSpokenText;
+                speechConfidence = _pendingSpeechConfidence;
+
+                _pendingDetection = null;
+                _pendingSpokenText = null;
+                _pendingSpeechConfidence = 0f;
+                _pendingChapterNumber = 0;
+                _pendingTimer?.Dispose();
+                _pendingTimer = null;
+            }
+
+            log.Info($"Pipeline: Grace period elapsed — releasing chapter-only " +
+                     $"\"{detected.NormalisedReference}\".");
+            FireDetection(detected, spokenText, speechConfidence);
+        }
+
+        /// <summary>
+        /// Tries to promote the pending chapter-only reference by splicing
+        /// this follow-up utterance onto the pending book + chapter context.
+        ///
+        /// If the minister said "Psalm twenty-three" and then "verse four",
+        /// the second utterance has no book name of its own — the detector
+        /// would return nothing. By prepending "Psalms chapter 23" we give
+        /// the detector the context it needs to parse "verse four" as "23:4".
+        ///
+        /// Returns true if an upgrade was detected, validated and fired
+        /// (in which case the caller should stop processing).
+        /// </summary>
+        private bool TryUpgradePendingWithFollowUp(SpeechRecognisedEventArgs followUp)
+        {
+            DetectedReference pending;
+            string            pendingSpoken;
+            float             pendingConfidence;
+            int               pendingChapter;
+
+            lock (_pendingLock)
+            {
+                if (_pendingDetection == null) return false;
+                pending           = _pendingDetection;
+                pendingSpoken     = _pendingSpokenText;
+                pendingConfidence = _pendingSpeechConfidence;
+                pendingChapter    = _pendingChapterNumber;
+            }
+
+            if (string.IsNullOrWhiteSpace(followUp?.Text)) return false;
+
+            string spliced = $"{pending.BookName} chapter {pendingChapter} {followUp.Text}";
+            var upgraded = BibleReferenceDetector.DetectBest(spliced);
+
+            if (upgraded == null) return false;
+            if (upgraded.ReferenceFragment == null || !upgraded.ReferenceFragment.Contains(":"))
+                return false;
+            if (!string.Equals(upgraded.BookName, pending.BookName, StringComparison.OrdinalIgnoreCase))
+                return false;
+            if (ParseChapterNumber(upgraded.ReferenceFragment) != pendingChapter)
+                return false;
+
+            // Clear the pending before firing so a subsequent detection on the
+            // same text can't double-fire.
+            lock (_pendingLock)
+            {
+                _pendingDetection = null;
+                _pendingSpokenText = null;
+                _pendingSpeechConfidence = 0f;
+                _pendingChapterNumber = 0;
+                _pendingTimer?.Dispose();
+                _pendingTimer = null;
+            }
+
+            // Pass the pending speech through validation via the normal path.
+            // Run the validator on the upgraded reference too.
+            Bible validationBible = null;
+            try { validationBible = _validationBible ?? (_validationBible = TryLoadValidationBible()); }
+            catch { /* non-fatal */ }
+
+            if (validationBible != null)
+            {
+                var validated = ReferenceValidator.Validate(
+                    validationBible, upgraded.BookName, upgraded.ReferenceFragment);
+                if (validated == null)
+                {
+                    log.Warn($"Pipeline: Upgraded \"{upgraded.NormalisedReference}\" failed validation. " +
+                             $"Falling back to pending chapter-only release.");
+                    FireDetection(pending, pendingSpoken, pendingConfidence);
+                    return true;
+                }
+                if (validated.Outcome != ValidationOutcome.Valid)
+                {
+                    upgraded = new DetectedReference
+                    {
+                        NormalisedReference = validated.NormalisedReference,
+                        BookName            = validated.BookName,
+                        ReferenceFragment   = validated.ReferenceFragment,
+                        MatchedRawText      = upgraded.MatchedRawText,
+                        Confidence          = upgraded.Confidence,
+                    };
+                }
+            }
+
+            log.Info($"Pipeline: Upgraded pending \"{pending.NormalisedReference}\" → " +
+                      $"\"{upgraded.NormalisedReference}\" via follow-up \"{followUp.Text}\".");
+
+            // Use the stronger of the two speech confidences.
+            float fusedSpeechConf = Math.Max(pendingConfidence, followUp.Confidence);
+            string fusedSpoken = $"{pendingSpoken} {followUp.Text}".Trim();
+
+            FireDetection(upgraded, fusedSpoken, fusedSpeechConf);
+            return true;
+        }
+
+        /// <summary>
+        /// Drops any pending chapter-only reference without firing. Useful
+        /// when the user manually stops listening or disables auto mode.
+        /// </summary>
+        public void CancelPendingReference()
+        {
+            lock (_pendingLock)
+            {
+                if (_pendingDetection == null) return;
+                log.Debug($"Pipeline: Discarding pending \"{_pendingDetection.NormalisedReference}\" (cancelled).");
+                _pendingDetection = null;
+                _pendingSpokenText = null;
+                _pendingSpeechConfidence = 0f;
+                _pendingChapterNumber = 0;
+                _pendingTimer?.Dispose();
+                _pendingTimer = null;
             }
         }
 
@@ -436,6 +787,14 @@ namespace WorshipHelperVSTO
 
             _cleanupTimer?.Stop();
             _cleanupTimer?.Dispose();
+
+            lock (_pendingLock)
+            {
+                _pendingTimer?.Dispose();
+                _pendingTimer     = null;
+                _pendingDetection = null;
+            }
+
             _listener?.Dispose();
 
             log.Info("SpeechToScriptureService: Disposed.");
