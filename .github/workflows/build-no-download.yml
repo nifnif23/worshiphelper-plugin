@@ -44,13 +44,6 @@ jobs:
           echo "NAUDIO_WINMM_PATH=$($naudioWinMM.FullName)" >> $env:GITHUB_ENV
           echo "VOSK_PATH=$($vosk.FullName)"                >> $env:GITHUB_ENV
 
-      - name: Verify Vosk model present
-        run: |
-          $modelDest = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\data\vosk-model"
-          if (-not (Test-Path $modelDest)) {
-            throw "Vosk model not found at $modelDest. Make sure it is committed to the repo or use the cached workflow."
-          }
-          Write-Host "Vosk model OK: $((Get-ChildItem $modelDest -Recurse -File).Count) files"
 
       - name: Generate self-signed certificate
         run: |
