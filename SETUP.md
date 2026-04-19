@@ -7,30 +7,15 @@ non-US accents.
 
 ---
 
-## Model recommendation
-
-**Use the large model (`vosk-model-en-us-0.22`, ~1.8 GB).**
-
-It is meaningfully more accurate for accented speech and reduces phonetic
-misfires (e.g. "eight" being heard as "amos"). On modern hardware (8 GB+ RAM,
-SSD) the cold load time is ~2–3 seconds — negligible for a service context.
-
-The small model (`vosk-model-small-en-us-0.15`, ~50 MB) is available as a
-fallback for low-spec machines, but is not recommended for regular use.
-
----
-
 ## If you build via GitHub Actions (normal)
 
-Edit `.github/workflows/main.yml` and make sure the model URL points to the
-large model:
+**Nothing extra to do.** The workflow automatically downloads the Vosk model
+during the build and bundles it inside the MSI. Just run the workflow and
+install the resulting MSI as usual.
 
-```yaml
-$modelUrl = "https://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip"
-```
-
-Then run the workflow as normal. The MSI will be larger (~1.8 GB extra) but
-accuracy will be significantly better.
+The bundled model is `vosk-model-small-en-us-0.15` (~50 MB). It's fast and
+good enough for structured phrases like Bible references. If you want the
+larger, more accurate model, see "Upgrading the model" below.
 
 ---
 
@@ -38,12 +23,12 @@ accuracy will be significantly better.
 
 You need to download the model once and put it in the right place before building.
 
-**1. Download the large model** from https://alphacephei.com/vosk/models:
+**1. Download a model** from https://alphacephei.com/vosk/models
 
-| Model | Size | Recommendation |
+| Model | Size | Notes |
 |---|---|---|
-| `vosk-model-en-us-0.22` | ~1.8 GB | **Recommended** |
-| `vosk-model-small-en-us-0.15` | ~50 MB | Low-spec fallback only |
+| `vosk-model-small-en-us-0.15` | ~50 MB | Start here |
+| `vosk-model-en-us-0.22` | ~1.8 GB | Best accuracy for Sunday use |
 
 **2. Extract it** to:
 ```
@@ -68,6 +53,22 @@ Install-Package NAudio -Version 2.2.1
 
 ---
 
+## Upgrading to the large model
+
+The large model (`vosk-model-en-us-0.22`, ~1.8 GB) is noticeably more accurate
+but makes the MSI much larger and slows the build by several minutes.
+
+To switch, edit `.github/workflows/main.yml` and change the two lines:
+```yaml
+$modelUrl  = "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip"
+```
+to:
+```yaml
+$modelUrl  = "https://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip"
+```
+
+---
+
 ## Troubleshooting
 
 **"Vosk model not found" on startup**
@@ -78,7 +79,7 @@ Check the WorshipHelper log for the exact path it tried.
 **No recognition / nothing happens**
 - Check Windows Sound settings — correct mic set as default input?
 - Speak clearly and include book + chapter + verse: *"John three sixteen"*
-- Check the debug panel (Monitor button) to see what Vosk is actually hearing
+- Check the debug panel to see what Vosk is actually hearing
 
 **Recognition works but references aren't detected**
 Vosk heard something but the Bible reference detector filtered it out.
@@ -91,17 +92,19 @@ Use the debug panel to see the raw recognised text. Common causes:
 
 ## What changed in this update
 
-**`SpeechListener.cs`** — large model recommended; pre-warm call added so the
-first real utterance doesn't stutter on model JIT initialisation.
+**`SpeechListener.cs`** — rewritten to use Vosk + NAudio instead of System.Speech.
+Same public API, same events throughout the rest of the project.
 
-**`PhoneticCorrector.cs`** — new Pass 5: "amos" in non-leading position is
-corrected to "eight" (Vosk was consistently mapping /eɪt/ → "amos").
+**`BibleReferenceDetector.cs`** — three fixes:
+- Removed `"of"` from the preamble skip list (was breaking "Song of Solomon")
+- Fuzzy matching with edit distance scaled by word length, so long obscure
+  names like Habakkuk, Zechariah, Thessalonians get enough slack to match
+  even when the engine mishears them
+- Small confidence penalty for fuzzy matches (still accepted, but ranked lower
+  than exact matches if both fire)
 
-**`SpeechListener.cs` grammar** — all short abbreviations removed (gen, exod,
-jn, rom, etc.). Fewer vocabulary targets means fewer false Vosk landings.
+**`SpokenNumberConverter.cs`** — fixed a bug where "twenty and six" would fail
+to split into chapter 20, verse 6
 
-**`TestRibbonItem.cs`** — speech-to-UI marshalling switched from
-`Control.BeginInvoke` to `SynchronizationContext.Post`, fixing the bug where
-references weren't inserted when the Monitor panel was closed. Template
-selection for speech insertion is now independent — use the new "Set Template"
-ribbon button in the Speech group.
+**`.github/workflows/main.yml`** — added a step to download and bundle the
+Vosk model automatically during the build

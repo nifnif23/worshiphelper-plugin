@@ -91,7 +91,7 @@ namespace WorshipHelperVSTO
             "open", "opening", "find", "finding", "flip", "flipping",
             "let's", "lets", "let", "us", "please", "now", "okay", "ok",
             "to", "at", "in", "from", "the", "book", "passage",
-            // NOTE: "of" intentionally removed — it breaks "Song of Solomon" matching
+            "of",
             "scripture", "text", "it's", "its", "says", "we're", "were",
             "i'm", "im", "today", "tonight", "this", "morning", "evening",
         };
@@ -408,9 +408,9 @@ namespace WorshipHelperVSTO
             // --- Old Testament ---
             Add("Genesis", "gen");
             Add("Exodus", "exod");
-            Add("Leviticus", "lev", "leviticus");
+            Add("Leviticus", "lev");
             Add("Numbers", "num");
-            Add("Deuteronomy", "deut", "deuteronomy", "deutronomy", "duteronomy");
+            Add("Deuteronomy", "deut", "deuteronomy");
             Add("Joshua", "josh");
             Add("Judges", "judg");
             Add("Ruth");
@@ -421,58 +421,51 @@ namespace WorshipHelperVSTO
             Add("1 Chronicles", "1 chron", "i chronicles", "i chron");
             Add("2 Chronicles", "2 chron", "ii chronicles", "ii chron");
             Add("Ezra");
-            Add("Nehemiah", "neh", "nehemia", "nehimiah", "nehimia");
+            Add("Nehemiah", "neh");
             Add("Esther");
             Add("Job");
-            Add("Psalms", "psalm", "psa", "salms", "sams");
-            Add("Proverbs", "prov", "proverb", "proverbs");
-            Add("Ecclesiastes", "eccl", "eccles", "ecclesiaste");
+            Add("Psalms", "psalm", "psa");
+            Add("Proverbs", "prov", "proverb");
+            Add("Ecclesiastes", "eccl", "eccles");
             Add("Song of Solomon", "song of songs", "song of sol", "songs of solomon", "solomon's song");
-            Add("Isaiah", "isa", "isaiah", "esaiah", "isaia");
-            Add("Jeremiah", "jer", "jeremia", "jerimiah", "jerimia");
-            Add("Lamentations", "lam", "lamentation");
-            Add("Ezekiel", "ezek", "ezekiel", "ezekia", "ezekel");
+            Add("Isaiah", "isa");
+            Add("Jeremiah", "jer");
+            Add("Lamentations", "lam");
+            Add("Ezekiel", "ezek");
             Add("Daniel", "dan");
-            Add("Hosea", "hos", "hosea", "hosia");
+            Add("Hosea", "hos");
             Add("Joel");
             Add("Amos");
-            Add("Obadiah", "obad", "obadia", "obadiya");
+            Add("Obadiah", "obad");
             Add("Jonah");
-            Add("Micah", "mic", "mica");
+            Add("Micah", "mic");
             Add("Nahum", "nah");
-            Add("Habakkuk", "hab", "habakuk", "habacuc", "habakuk", "habacuk");
-            Add("Zephaniah", "zeph", "zefaniah", "zefania", "zephaniah");
-            Add("Haggai", "hag", "hagai", "hagai");
-            // Zechariah — most commonly mispronounced/misheard book in the OT.
-            // Nigerian English: /zɛkəˈraɪə/ → often comes out as "zakariah",
-            // "zakaria", "zekaria", "zacharia". The small Vosk model maps it to
-            // "zech" because that's shorter. We add all phonetic variants so the
-            // fuzzy matcher catches whatever Vosk produces.
-            Add("Zechariah", "zech", "zachariah", "zacharia", "zakaria",
-                "zakariah", "zekaria", "zekariah", "zacharia", "zecharia",
-                "zecharias", "zacharias");
-            Add("Malachi", "mal", "malaki", "malachi");
+            Add("Habakkuk", "hab");
+            Add("Zephaniah", "zeph");
+            Add("Haggai", "hag");
+            Add("Zechariah", "zech");
+            Add("Malachi", "mal");
 
             // --- New Testament ---
-            Add("Matthew", "matt", "mat", "mathew", "mathieu");
+            Add("Matthew", "matt", "mat");
             Add("Mark");
             Add("Luke");
             Add("John", "jn");
             Add("Acts", "act");
             Add("Romans", "rom");
-            Add("1 Corinthians", "1 cor", "i corinthians", "i cor", "1 corinthian", "corinthian");
-            Add("2 Corinthians", "2 cor", "ii corinthians", "ii cor", "2 corinthian");
-            Add("Galatians", "gal", "galatian");
-            Add("Ephesians", "eph", "ephesian");
-            Add("Philippians", "phil", "php", "philippian", "philipians", "philipian");
-            Add("Colossians", "col", "colossian", "colosians", "colosian");
-            Add("1 Thessalonians", "1 thess", "i thessalonians", "i thess", "1 thessalonian", "thessalonian");
-            Add("2 Thessalonians", "2 thess", "ii thessalonians", "ii thess", "2 thessalonian");
-            Add("1 Timothy", "1 tim", "i timothy", "i tim", "1 timoty", "timoty");
-            Add("2 Timothy", "2 tim", "ii timothy", "ii tim", "2 timoty");
+            Add("1 Corinthians", "1 cor", "i corinthians", "i cor");
+            Add("2 Corinthians", "2 cor", "ii corinthians", "ii cor");
+            Add("Galatians", "gal");
+            Add("Ephesians", "eph");
+            Add("Philippians", "phil", "php");
+            Add("Colossians", "col");
+            Add("1 Thessalonians", "1 thess", "i thessalonians", "i thess");
+            Add("2 Thessalonians", "2 thess", "ii thessalonians", "ii thess");
+            Add("1 Timothy", "1 tim", "i timothy", "i tim");
+            Add("2 Timothy", "2 tim", "ii timothy", "ii tim");
             Add("Titus", "tit");
-            Add("Philemon", "phlm", "philem", "filemon", "philemon");
-            Add("Hebrews", "heb", "hebrew");
+            Add("Philemon", "phlm", "philem");
+            Add("Hebrews", "heb");
             Add("James", "jas");
             Add("1 Peter", "1 pet", "i peter", "i pet");
             Add("2 Peter", "2 pet", "ii peter", "ii pet");
@@ -480,7 +473,7 @@ namespace WorshipHelperVSTO
             Add("2 John", "2 jn", "ii john", "ii jn");
             Add("3 John", "3 jn", "iii john", "iii jn");
             Add("Jude");
-            Add("Revelation", "rev", "revelations", "revelacion", "revelasion");
+            Add("Revelation", "rev", "revelations");
 
             // Sort by longest variant first so greedy matching works correctly
             return list.OrderByDescending(b => b.MaxTokens).ToList();

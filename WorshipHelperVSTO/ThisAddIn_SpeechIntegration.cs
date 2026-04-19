@@ -65,14 +65,9 @@ namespace WorshipHelperVSTO
         private SpeechToScriptureService _speechService;
 
         /// <summary>
-        /// Public accessor so the ribbon can toggle listening and auto-scripture mode.
+        /// Public accessor so the ribbon can toggle listening.
         /// </summary>
         public SpeechToScriptureService SpeechService => _speechService;
-
-        /// <summary>
-        /// Public accessor for the auto-scripture mode singleton.
-        /// </summary>
-        public AutoScriptureMode AutoScripture => AutoScriptureMode.Instance;
 
         // -----------------------------------------------------------------------
         // Call this from ThisAddIn_Startup, AFTER existing initialisation
@@ -83,6 +78,9 @@ namespace WorshipHelperVSTO
             {
                 _speechService = new SpeechToScriptureService();
 
+                // ---------------------------------------------------------------
+                // THE KEY WIRING: when a reference is detected, insert scripture.
+                // ---------------------------------------------------------------
                 _speechService.OnReferenceDetected += SpeechService_OnReferenceDetected;
                 _speechService.OnStatusChanged += SpeechService_OnStatusChanged;
 
@@ -91,6 +89,7 @@ namespace WorshipHelperVSTO
             catch (Exception ex)
             {
                 log.Error("Failed to initialise speech service.", ex);
+                // Non-fatal: the rest of the add-in still works.
             }
         }
 
@@ -101,7 +100,6 @@ namespace WorshipHelperVSTO
         {
             try
             {
-                AutoScriptureMode.Instance.Disable();
                 _speechService?.Dispose();
                 _speechService = null;
             }
@@ -112,44 +110,42 @@ namespace WorshipHelperVSTO
         }
 
         // -----------------------------------------------------------------------
-        // Reference detected handler
+        // Reference detected handler — THIS IS WHERE SPEECH MEETS YOUR EXISTING CODE
         // -----------------------------------------------------------------------
         private void SpeechService_OnReferenceDetected(object sender, ReferenceDetectedEventArgs e)
         {
-            // ⚠ Fires on a background thread — must marshal to main STA thread.
+            // ⚠ This fires on a background thread!
+            // We must marshal to the main (STA) thread to interact with PowerPoint.
+
             log.Info($"Speech detected reference: \"{e.NormalisedReference}\" " +
                      $"(spoken: \"{e.SpokenText}\", confidence: {e.Confidence:F2})");
 
             try
             {
-                // Auto Scripture Mode: insert immediately without any UI interaction.
-                // The presenter just says the reference and the slide appears.
-                if (AutoScriptureMode.Instance.IsEnabled)
-                {
-                    var mainForm = System.Windows.Forms.Application.OpenForms.Count > 0
-                        ? System.Windows.Forms.Application.OpenForms[0]
-                        : null;
-
-                    if (mainForm != null && mainForm.InvokeRequired)
-                    {
-                        mainForm.BeginInvoke((Action)(() =>
-                            AutoScriptureMode.Instance.HandleDetectedReference(
-                                e.NormalisedReference,
-                                e.SpokenText,
-                                InsertScriptureFromSpeech)));
-                    }
-                    else
-                    {
-                        AutoScriptureMode.Instance.HandleDetectedReference(
-                            e.NormalisedReference,
-                            e.SpokenText,
-                            InsertScriptureFromSpeech);
-                    }
-                    return;
-                }
-
-                // Manual mode: direct insertion (existing behaviour).
+                // Option A: Direct insertion (simplest path)
+                // This calls your existing ScriptureManager directly.
                 InsertScriptureFromSpeech(e.NormalisedReference);
+
+                // Option B: If you prefer to show a confirmation dialog first,
+                // uncomment the block below and comment out Option A above.
+                /*
+                System.Windows.Forms.Application.OpenForms[0]?.Invoke(
+                    (Action)(() =>
+                    {
+                        var result = MessageBox.Show(
+                            $"Detected scripture reference:\n\n{e.NormalisedReference}\n\n" +
+                            $"(Heard: \"{e.SpokenText}\")\n\nInsert this scripture?",
+                            "Speech Detection",
+                            MessageBoxButtons.YesNo,
+                            MessageBoxIcon.Question,
+                            MessageBoxDefaultButton.Button1);
+
+                        if (result == DialogResult.Yes)
+                        {
+                            InsertScriptureFromSpeech(e.NormalisedReference);
+                        }
+                    }));
+                */
             }
             catch (Exception ex)
             {
@@ -304,40 +300,40 @@ namespace WorshipHelperVSTO
 {
     public partial class TestRibbonItem
     {
-        // ── Auto Scripture Mode toggle ────────────────────────────────────────
-        // Wired to the existing btnToggleSpeech button in the ribbon designer.
-        // When Auto Scripture Mode is ON, speech is active and any detected
-        // reference is inserted immediately without any UI interaction.
-        // Shift key in presenter view also toggles this mode.
-        //
-        // The existing btnToggleSpeech_Click in TestRibbonItem.cs handles basic
-        // listen on/off. This handler layers Auto Scripture Mode on top of it.
+        // Add this button click handler (wire it to a new ribbon button).
+        // In the ribbon designer, add a ToggleButton named "btnSpeechListen"
+        // to the "grpScripture" group (or wherever you prefer).
 
-        private void btnAutoScripture_Click(object sender, Microsoft.Office.Tools.Ribbon.RibbonControlEventArgs e)
+        private void btnSpeechListen_Click(object sender, Microsoft.Office.Tools.Ribbon.RibbonControlEventArgs e)
         {
             try
             {
                 var service = Globals.ThisAddIn.SpeechService;
-                bool nowOn = AutoScriptureMode.Instance.Toggle(service);
+                if (service == null)
+                {
+                    System.Windows.Forms.MessageBox.Show(
+                        "Speech service is not available. Please check that a microphone " +
+                        "is connected and Windows Speech Recognition is enabled.",
+                        "Speech Service",
+                        System.Windows.Forms.MessageBoxButtons.OK,
+                        System.Windows.Forms.MessageBoxIcon.Warning);
+                    return;
+                }
 
+                bool nowListening = service.Toggle();
+
+                // Update button appearance
                 var btn = sender as Microsoft.Office.Tools.Ribbon.RibbonToggleButton;
                 if (btn != null)
                 {
-                    btn.Label   = nowOn ? "⚡ Auto ON" : "⚡ Auto Scripture";
-                    btn.Checked = nowOn;
-                }
-
-                // Keep the existing speech toggle button in sync
-                if (nowOn && service?.IsListening == true)
-                {
-                    btnToggleSpeech.Image = global::WorshipHelperVSTO.Properties.Resources.mic_active;
-                    btnToggleSpeech.Label = "Listening...";
+                    btn.Label = nowListening ? "🎤 Listening…" : "🎤 Listen";
+                    btn.Checked = nowListening;
                 }
             }
             catch (Exception ex)
             {
                 System.Windows.Forms.MessageBox.Show(
-                    $"Error toggling Auto Scripture Mode:\n\n{ex.Message}",
+                    $"Error toggling speech listener:\n\n{ex.Message}",
                     "Error",
                     System.Windows.Forms.MessageBoxButtons.OK,
                     System.Windows.Forms.MessageBoxIcon.Error);

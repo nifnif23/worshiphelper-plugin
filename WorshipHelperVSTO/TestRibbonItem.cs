@@ -9,7 +9,7 @@ namespace WorshipHelperVSTO
     public partial class TestRibbonItem
     {
         private SpeechToScriptureService _speechService;
-        private System.Threading.SynchronizationContext _uiContext;
+        private System.Windows.Forms.Control _uiThreadMarshaller;
         private SpeechDebugPanel _debugPanel;
 
         private SpeechToScriptureService SpeechService
@@ -18,13 +18,8 @@ namespace WorshipHelperVSTO
             {
                 if (_speechService == null)
                 {
-                    // Capture the UI SynchronizationContext on this (UI) thread.
-                    // This is more reliable than Control.BeginInvoke in a VSTO host
-                    // where the hidden-control approach can fail to pump messages
-                    // when no WinForms message loop is actively running.
-                    _uiContext = System.Threading.SynchronizationContext.Current
-                                 ?? new System.Windows.Forms.WindowsFormsSynchronizationContext();
-
+                    _uiThreadMarshaller = new System.Windows.Forms.Control();
+                    _uiThreadMarshaller.CreateControl();
                     _speechService = new SpeechToScriptureService();
                     _speechService.OnReferenceDetected += OnReferenceDetected;
                     _speechService.OnStatusChanged     += OnSpeechStatusChanged;
@@ -46,11 +41,9 @@ namespace WorshipHelperVSTO
 
         private void OnReferenceDetected(object sender, ReferenceDetectedEventArgs e)
         {
-            // Marshal to the UI thread via the SynchronizationContext captured when
-            // the service was first created. This works whether or not the debug
-            // panel (Monitor) is open — unlike the old Control.BeginInvoke approach,
-            // which required a visible WinForms message pump to reliably fire.
-            _uiContext?.Post(_ =>
+            if (_uiThreadMarshaller == null || !_uiThreadMarshaller.IsHandleCreated) return;
+
+            _uiThreadMarshaller.BeginInvoke(new System.Action(() =>
             {
                 try
                 {
@@ -68,46 +61,23 @@ namespace WorshipHelperVSTO
                 {
                     log4net.LogManager.GetLogger(typeof(TestRibbonItem)).Error("Speech toast failed", ex);
                 }
-            }, null);
+            }));
         }
 
         private void InsertReference(string normalisedReference)
         {
             try
             {
-                var regKey = Registry.CurrentUser.OpenSubKey(@"SOFTWARE\WorshipHelper");
-                var lastTranslation = regKey?.GetValue("LastBibleTranslation") as string ?? "ESV";
+                var lastTranslation = Registry.CurrentUser
+                    .OpenSubKey(@"SOFTWARE\WorshipHelper")
+                    ?.GetValue("LastBibleTranslation") as string ?? "ESV";
 
                 var bible = OpenSongBibleReader.LoadTranslation(lastTranslation);
 
-                // Template resolution order:
-                //   1. SpeechScriptureTemplate — set specifically for speech via "Set Template" button
-                //   2. LastScriptureTemplate   — the last template picked in InsertScriptureForm
-                //   3. First available template — fallback
-                var speechTemplateName = regKey?.GetValue("SpeechScriptureTemplate") as string;
-                var fallbackTemplateName = regKey?.GetValue("LastScriptureTemplate") as string;
-
-                var installedFiles = System.IO.Directory.GetFiles(
+                var templateFiles = System.IO.Directory.GetFiles(
                     ThisAddIn.appDataPath + @"\Templates", "*.pptx");
-                System.IO.Directory.CreateDirectory(
-                    ThisAddIn.userDataPath + @"\UserTemplates\Scripture");
-                var userFiles = System.IO.Directory.GetFiles(
-                    ThisAddIn.userDataPath + @"\UserTemplates\Scripture", "*.pptx");
-                var allTemplateFiles = installedFiles.Concat(userFiles).ToArray();
-
-                if (allTemplateFiles.Length == 0) return;
-
-                ScriptureTemplate template = null;
-                foreach (var file in allTemplateFiles)
-                {
-                    var t = new ScriptureTemplate(file);
-                    if (speechTemplateName != null && t.name == speechTemplateName)
-                        { template = t; break; }
-                    if (template == null && fallbackTemplateName != null && t.name == fallbackTemplateName)
-                        template = t;
-                }
-                if (template == null)
-                    template = new ScriptureTemplate(allTemplateFiles[0]);
+                if (templateFiles.Length == 0) return;
+                var template = new ScriptureTemplate(templateFiles[0]);
 
                 var parsed = FullReferenceParser.ParseFullReference(bible, normalisedReference);
                 if (parsed == null) return;
@@ -124,104 +94,6 @@ namespace WorshipHelperVSTO
             catch (System.Exception ex)
             {
                 log4net.LogManager.GetLogger(typeof(TestRibbonItem)).Error("Speech insert failed", ex);
-            }
-        }
-
-        /// <summary>
-        /// Opens a simple picker so the user can choose which slide template the
-        /// speech listener inserts scripture into. The choice is saved under
-        /// SpeechScriptureTemplate in the registry and is independent of the
-        /// LastScriptureTemplate setting used by the manual Insert Scripture form.
-        /// </summary>
-        private void btnSpeechTemplate_Click(object sender, RibbonControlEventArgs e)
-        {
-            try
-            {
-                var installedFiles = System.IO.Directory.GetFiles(
-                    ThisAddIn.appDataPath + @"\Templates", "*.pptx");
-                System.IO.Directory.CreateDirectory(
-                    ThisAddIn.userDataPath + @"\UserTemplates\Scripture");
-                var userFiles = System.IO.Directory.GetFiles(
-                    ThisAddIn.userDataPath + @"\UserTemplates\Scripture", "*.pptx");
-                var allFiles = installedFiles.Concat(userFiles).ToArray();
-
-                if (allFiles.Length == 0)
-                {
-                    System.Windows.Forms.MessageBox.Show(
-                        "No scripture templates found in:\n" + ThisAddIn.appDataPath + @"\Templates",
-                        "No Templates", System.Windows.Forms.MessageBoxButtons.OK,
-                        System.Windows.Forms.MessageBoxIcon.Warning);
-                    return;
-                }
-
-                // Read current speech template selection
-                var regKey = Registry.CurrentUser.OpenSubKey(@"SOFTWARE\WorshipHelper");
-                var currentName = regKey?.GetValue("SpeechScriptureTemplate") as string;
-
-                // Build a simple picker form
-                using (var picker = new System.Windows.Forms.Form())
-                {
-                    picker.Text = "Speech: Choose Template";
-                    picker.Size = new System.Drawing.Size(340, 220);
-                    picker.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen;
-                    picker.FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedDialog;
-                    picker.MaximizeBox = false; picker.MinimizeBox = false;
-
-                    var lbl = new System.Windows.Forms.Label
-                    {
-                        Text = "Template to use when speech inserts scripture:",
-                        Location = new System.Drawing.Point(12, 12),
-                        Size = new System.Drawing.Size(300, 32),
-                        Font = new System.Drawing.Font("Segoe UI", 9f)
-                    };
-                    picker.Controls.Add(lbl);
-
-                    var list = new System.Windows.Forms.ListBox
-                    {
-                        Location = new System.Drawing.Point(12, 48),
-                        Size = new System.Drawing.Size(300, 100),
-                        Font = new System.Drawing.Font("Segoe UI", 9.5f)
-                    };
-                    foreach (var f in allFiles)
-                        list.Items.Add(new ScriptureTemplate(f));
-                    // Pre-select current
-                    for (int i = 0; i < list.Items.Count; i++)
-                        if (((ScriptureTemplate)list.Items[i]).name == currentName)
-                            { list.SelectedIndex = i; break; }
-                    if (list.SelectedIndex < 0 && list.Items.Count > 0)
-                        list.SelectedIndex = 0;
-                    picker.Controls.Add(list);
-
-                    var btnOk = new System.Windows.Forms.Button
-                    {
-                        Text = "OK", DialogResult = System.Windows.Forms.DialogResult.OK,
-                        Location = new System.Drawing.Point(152, 158), Size = new System.Drawing.Size(75, 26)
-                    };
-                    var btnCancel = new System.Windows.Forms.Button
-                    {
-                        Text = "Cancel", DialogResult = System.Windows.Forms.DialogResult.Cancel,
-                        Location = new System.Drawing.Point(237, 158), Size = new System.Drawing.Size(75, 26)
-                    };
-                    picker.Controls.Add(btnOk);
-                    picker.Controls.Add(btnCancel);
-                    picker.AcceptButton = btnOk;
-                    picker.CancelButton = btnCancel;
-
-                    if (picker.ShowDialog() == System.Windows.Forms.DialogResult.OK
-                        && list.SelectedItem is ScriptureTemplate chosen)
-                    {
-                        Registry.CurrentUser
-                            .CreateSubKey(@"SOFTWARE\WorshipHelper")
-                            .SetValue("SpeechScriptureTemplate", chosen.name);
-
-                        // Update the ribbon button label to confirm
-                        btnSpeechTemplate.Label = "Template: " + chosen.name;
-                    }
-                }
-            }
-            catch (System.Exception ex)
-            {
-                log4net.LogManager.GetLogger(typeof(TestRibbonItem)).Error("Template picker failed", ex);
             }
         }
 
@@ -245,53 +117,24 @@ namespace WorshipHelperVSTO
 
         private void btnToggleSpeech_Click(object sender, RibbonControlEventArgs e)
         {
-            try
-            {
-                bool isNowListening = SpeechService.Toggle();
+            bool isNowListening = SpeechService.Toggle();
 
-                if (isNowListening)
-                {
-                    btnToggleSpeech.Image = global::WorshipHelperVSTO.Properties.Resources.mic_active;
-                    btnToggleSpeech.Label = "Listening...";
-                }
-                else
-                {
-                    btnToggleSpeech.Image = global::WorshipHelperVSTO.Properties.Resources.mic;
-                    btnToggleSpeech.Label = "Listen";
-                    // Turning off listening also kills auto scripture mode
-                    AutoScriptureMode.Instance.Disable();
-                }
+            if (isNowListening)
+            {
+                btnToggleSpeech.Image = global::WorshipHelperVSTO.Properties.Resources.mic_active;
+                btnToggleSpeech.Label = "Listening...";
+            }
+            else
+            {
+                btnToggleSpeech.Image = global::WorshipHelperVSTO.Properties.Resources.mic;
+                btnToggleSpeech.Label = "Listen";
+            }
 
-                if (_debugPanel != null && !_debugPanel.IsDisposed)
-                    _debugPanel.SetListening(isNowListening);
-            }
-            catch (System.IO.DirectoryNotFoundException ex)
-            {
-                System.Windows.Forms.MessageBox.Show(
-                    ex.Message + "\n\nDownload a Vosk model from https://alphacephei.com/vosk/models " +
-                    "and extract it to the path shown above.",
-                    "Vosk Model Not Found",
-                    System.Windows.Forms.MessageBoxButtons.OK,
-                    System.Windows.Forms.MessageBoxIcon.Warning);
-            }
-            catch (System.Exception ex)
-            {
-                System.Windows.Forms.MessageBox.Show(
-                    $"Failed to start speech recognition:\n\n{ex.Message}",
-                    "Speech Error",
-                    System.Windows.Forms.MessageBoxButtons.OK,
-                    System.Windows.Forms.MessageBoxIcon.Error);
-            }
+            if (_debugPanel != null && !_debugPanel.IsDisposed)
+                _debugPanel.SetListening(isNowListening);
         }
         private void TestRibbonItem_Load(object sender, RibbonUIEventArgs e)
         {
-            // Restore saved speech template label so user can see what's selected
-            var speechTemplate = Registry.CurrentUser
-                .OpenSubKey(@"SOFTWARE\WorshipHelper")
-                ?.GetValue("SpeechScriptureTemplate") as string;
-            if (!string.IsNullOrEmpty(speechTemplate))
-                btnSpeechTemplate.Label = "Template: " + speechTemplate;
-
             var favRegistryKey = Registry.CurrentUser.CreateSubKey(@"SOFTWARE\WorshipHelper\Favourites");
             var favouriteCount = favRegistryKey.GetValueNames().Length;
             for (int i=0; i < favouriteCount; i++)

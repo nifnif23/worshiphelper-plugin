@@ -95,10 +95,6 @@ namespace WorshipHelperVSTO
 
             // Start in single-reference mode
             SetMode(false);
-
-            // Focus txtBook once the form is fully shown (can't focus in constructor
-            // because the window handle doesn't exist yet)
-            this.Shown += (s, e) => txtBook.Focus();
         }
 
         // -----------------------------------------------------------------------

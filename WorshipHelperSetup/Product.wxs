@@ -11,7 +11,6 @@
 
 		<Feature Id="ProductFeature" Title="WorshipHelper" Level="1">
 			<ComponentGroupRef Id="ProductComponents" />
-			<ComponentGroupRef Id="VoskModelFiles" />
 			<ComponentRef Id="Registry_FriendlyName" />
 			<ComponentRef Id="Registry_Description" />
 			<ComponentRef Id="Registry_Manifest" />
@@ -31,17 +30,23 @@
 			  Type="raw" />
 		</Property>
 		<Condition
-		  Message="The Visual Studio 2010 Tools for Office Runtime is not installed. Please download and install from http://www.microsoft.com/en-us/download/details.aspx?id=20479.">
+		  Message="The Visual Studio 2010 Tools for Office Runtime is not installed. 
+  Please download and install from 
+  http://www.microsoft.com/en-us/download/details.aspx?id=20479.">
 			<![CDATA[Installed OR VSTORUNTIMEREDIST>="10.0.30319"]]>
 		</Condition>
+
+		<!--<PropertyRef Id="NETFRAMEWORK40FULL"/>
+    <Condition Message="This application requires .NET Framework 4.0.">
+      <![CDATA[Installed OR NETFRAMEWORK40FULL]]>
+    </Condition>-->
 	</Product>
 
 	<Fragment>
 		<Directory Id="TARGETDIR" Name="SourceDir">
 			<Directory Id="ProgramFilesFolder">
 				<Directory Id="INSTALLFOLDER" Name="WorshipHelper">
-					<Directory Id="DATA_DIR" Name="data">
-						<Directory Id="VOSK_MODEL_DIR" Name="vosk-model" />
+					<Directory Id="DATA_DIR" Name="Data">
 						<Directory Id="TEMPLATES_DIR" Name="Templates" />
 						<Directory Id="BIBLES_DIR" Name="Bibles" />
 					</Directory>
@@ -87,72 +92,37 @@
 		<ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
 			<Component Id="WorshipHelper_vsto_Component">
 				<File Id="WorshipHelper_vsto" KeyPath="yes"
-					  Name="WorshipHelperVSTO.vsto" Source="$(var.WorshipHelperVSTO.TargetDir)" />
+					  Name="WorshipHelperVSTO.vsto" Source="$(var.WorshipHelperVSTO.TargetDir)"></File>
 			</Component>
-			<Component Id="WorshipHelper_dll_Component">
+			<Component Id="WorshipHelper_dll_Component" >
 				<File Id="WorshipHelperVSTO_dll" KeyPath="yes"
 					  Name="WorshipHelperVSTO.dll" Source="$(var.WorshipHelperVSTO.TargetDir)" />
 			</Component>
 			<Component Id="WorshipHelper_dll_manifest_Component">
 				<File Id="WorshipHelperVSTO_dll_manifest" KeyPath="yes"
-					  Name="WorshipHelperVSTO.dll.manifest" Source="$(var.WorshipHelperVSTO.TargetDir)" />
+					  Name="WorshipHelperVSTO.dll.manifest" Source="$(var.WorshipHelperVSTO.TargetDir)"></File>
 			</Component>
-			<Component Id="WorshipHelper_dll_config_Component">
-				<File Id="WorshipHelperVSTO_dll_config" KeyPath="yes"
-					  Name="WorshipHelperVSTO.dll.config" Source="$(var.WorshipHelperVSTO.TargetDir)" />
-			</Component>
+      <Component Id="WorshipHelper_dll_config_Component">
+        <File Id="WorshipHelperVSTO_dll_config" KeyPath="yes"
+					  Name="WorshipHelperVSTO.dll.config" Source="$(var.WorshipHelperVSTO.TargetDir)"></File>
+      </Component>
 			<Component Id="MSOfficeToolsCommon_dll_Component">
 				<File Id="MSOfficeToolsCommon_dll" KeyPath="yes"
 					  Name="Microsoft.Office.Tools.Common.v4.0.Utilities.dll"
-					  Source="$(var.WorshipHelperVSTO.TargetDir)" />
+					  Source="$(var.WorshipHelperVSTO.TargetDir)"></File>
 			</Component>
-			<Component Id="log4net_dll_Component">
-				<File Id="log4net_dll" KeyPath="yes"
+      <Component Id="log4net_dll_Component">
+        <File Id="log4net_dll" KeyPath="yes"
 					  Name="log4net.dll"
-					  Source="$(var.WorshipHelperVSTO.TargetDir)" />
-			</Component>
-			<Component Id="Vosk_dll_Component">
-				<File Id="Vosk_dll" KeyPath="yes"
-					  Name="Vosk.dll"
-					  Source="$(var.WorshipHelperVSTO.TargetDir)" />
-			</Component>
-			<Component Id="libvosk_dll_Component">
-				<File Id="libvosk_dll" KeyPath="yes"
-					  Name="libvosk.dll"
-					  Source="$(var.WorshipHelperVSTO.TargetDir)" />
-			</Component>
-			<Component Id="NAudioCore_dll_Component">
-				<File Id="NAudioCore_dll" KeyPath="yes"
-					  Name="NAudio.Core.dll"
-					  Source="$(var.WorshipHelperVSTO.TargetDir)" />
-			</Component>
-			<Component Id="NAudioWinMM_dll_Component">
-				<File Id="NAudioWinMM_dll" KeyPath="yes"
-					  Name="NAudio.WinMM.dll"
-					  Source="$(var.WorshipHelperVSTO.TargetDir)" />
-			</Component>
-			<Component Id="libgcc_dll_Component">
-				<File Id="libgcc_dll" KeyPath="yes"
-					  Name="libgcc_s_seh-1.dll"
-					  Source="$(var.WorshipHelperVSTO.TargetDir)" />
-			</Component>
-			<Component Id="libstdcpp_dll_Component">
-				<File Id="libstdcpp_dll" KeyPath="yes"
-					  Name="libstdc++-6.dll"
-					  Source="$(var.WorshipHelperVSTO.TargetDir)" />
-			</Component>
-			<Component Id="libwinpthread_dll_Component">
-				<File Id="libwinpthread_dll" KeyPath="yes"
-					  Name="libwinpthread-1.dll"
-					  Source="$(var.WorshipHelperVSTO.TargetDir)" />
-			</Component>
+					  Source="$(var.WorshipHelperVSTO.TargetDir)"></File>
+      </Component>
 		</ComponentGroup>
 
 		<DirectoryRef Id="TEMPLATES_DIR">
 			<Component Id="ScriptureTemplate_Component">
 				<File Id="Default" KeyPath="yes"
 					  Name="Default.pptx"
-					  Source="$(var.WorshipHelperVSTO.TargetDir)data\Templates\Default.pptx" />
+					  Source="$(var.WorshipHelperVSTO.TargetDir)data\Templates\Default.pptx"></File>
 			</Component>
 		</DirectoryRef>
 
@@ -160,13 +130,14 @@
 			<Component Id="Bible_NASB_Component">
 				<File Id="NASB_xmm" KeyPath="yes"
 					  Name="NASB.xmm"
-					  Source="$(var.WorshipHelperVSTO.TargetDir)data\Bibles\NASB.xmm" />
+					  Source="$(var.WorshipHelperVSTO.TargetDir)data\Bibles\NASB.xmm"></File>
 			</Component>
 			<Component Id="Bible_ESV_Component">
 				<File Id="ESV_xmm" KeyPath="yes"
 					  Name="ESV.xmm"
-					  Source="$(var.WorshipHelperVSTO.TargetDir)data\Bibles\ESV.xmm" />
+					  Source="$(var.WorshipHelperVSTO.TargetDir)data\Bibles\ESV.xmm"></File>
 			</Component>
 		</DirectoryRef>
+
 	</Fragment>
 </Wix>

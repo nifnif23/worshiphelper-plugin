@@ -80,7 +80,6 @@ namespace WorshipHelperVSTO
             this.grpSpeech = this.Factory.CreateRibbonGroup();
             this.btnToggleSpeech = this.Factory.CreateRibbonToggleButton();
             this.btnMonitorSpeech = this.Factory.CreateRibbonButton();
-            this.btnSpeechTemplate = this.Factory.CreateRibbonButton();
             this.grpDebug = this.Factory.CreateRibbonGroup();
             this.btnSelfTest = this.Factory.CreateRibbonButton();
             this.tab1.SuspendLayout();
@@ -142,7 +141,6 @@ namespace WorshipHelperVSTO
             // 
             this.grpSpeech.Items.Add(this.btnToggleSpeech);
             this.grpSpeech.Items.Add(this.btnMonitorSpeech);
-            this.grpSpeech.Items.Add(this.btnSpeechTemplate);
             this.grpSpeech.Label = "Speech";
             this.grpSpeech.Name = "grpSpeech";
             // 
@@ -162,14 +160,6 @@ namespace WorshipHelperVSTO
             this.btnMonitorSpeech.Name = "btnMonitorSpeech";
             this.btnMonitorSpeech.ShowImage = false;
             this.btnMonitorSpeech.Click += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.btnMonitorSpeech_Click);
-            // 
-            // btnSpeechTemplate
-            // 
-            this.btnSpeechTemplate.ControlSize = Microsoft.Office.Core.RibbonControlSize.RibbonControlSizeRegular;
-            this.btnSpeechTemplate.Label = "Set Template";
-            this.btnSpeechTemplate.Name = "btnSpeechTemplate";
-            this.btnSpeechTemplate.ShowImage = false;
-            this.btnSpeechTemplate.Click += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.btnSpeechTemplate_Click);
             // 
             // grpDebug
             // 
@@ -212,7 +202,6 @@ namespace WorshipHelperVSTO
         internal Microsoft.Office.Tools.Ribbon.RibbonGroup grpSpeech;
         internal Microsoft.Office.Tools.Ribbon.RibbonToggleButton btnToggleSpeech;
         internal Microsoft.Office.Tools.Ribbon.RibbonButton btnMonitorSpeech;
-        internal Microsoft.Office.Tools.Ribbon.RibbonButton btnSpeechTemplate;
         internal RibbonGroup grpDebug;
         internal RibbonButton btnSelfTest;
     }
