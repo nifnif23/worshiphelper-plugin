@@ -12,6 +12,12 @@ namespace WorshipHelperVSTO
         private System.Threading.SynchronizationContext _uiContext;
         private SpeechDebugPanel _debugPanel;
 
+        // The currently-visible speech confirmation toast, if any. Kept so
+        // that follow-up detections can EDIT the existing toast in place
+        // (e.g. "Genesis 1" → "Genesis 1:5") rather than stacking a second
+        // popup on top of the first one.
+        private SpeechConfirmForm _activeToast;
+
         private SpeechToScriptureService SpeechService
         {
             get
@@ -33,9 +39,10 @@ namespace WorshipHelperVSTO
                     _speechService = Globals.ThisAddIn?.SpeechService
                                      ?? new SpeechToScriptureService();
 
-                    _speechService.OnReferenceDetected += OnReferenceDetected;
-                    _speechService.OnStatusChanged     += OnSpeechStatusChanged;
-                    _speechService.OnRawSpeech         += OnRawSpeech;
+                    _speechService.OnReferenceDetected   += OnReferenceDetected;
+                    _speechService.OnReferencePreliminary += OnReferencePreliminary;
+                    _speechService.OnStatusChanged       += OnSpeechStatusChanged;
+                    _speechService.OnRawSpeech           += OnRawSpeech;
                     if (_speechService.Listener != null)
                         _speechService.Listener.PhaseChanged += OnPhaseChanged;
 
@@ -99,6 +106,43 @@ namespace WorshipHelperVSTO
             }
         }
 
+        /// <summary>
+        /// Fires immediately when the pipeline hears a chapter-only reference
+        /// (e.g. "Genesis 1"). We surface the toast right away so the presenter
+        /// gets visual feedback without waiting for the 10-second grace window
+        /// to elapse. If a richer reference arrives later, <see cref="OnReferenceDetected"/>
+        /// will edit this same toast in place.
+        /// </summary>
+        private void OnReferencePreliminary(object sender, ReferenceDetectedEventArgs e)
+        {
+            _uiContext?.Post(_ =>
+            {
+                try
+                {
+                    if (_debugPanel != null && !_debugPanel.IsDisposed)
+                        _debugPanel.SetDetected(e.NormalisedReference);
+
+                    // In Auto Scripture Mode we don't pop a confirmation toast at
+                    // all — the presenter has delegated trust to the listener.
+                    if (AutoScriptureMode.Instance.IsEnabled) return;
+
+                    // Already a toast on screen? Edit it rather than stacking.
+                    if (_activeToast != null && !_activeToast.IsDisposed)
+                    {
+                        _activeToast.UpdateReference(e.NormalisedReference);
+                        return;
+                    }
+
+                    ShowToast(e.NormalisedReference);
+                }
+                catch (System.Exception ex)
+                {
+                    log4net.LogManager.GetLogger(typeof(TestRibbonItem))
+                        .Error("Preliminary speech toast failed", ex);
+                }
+            }, null);
+        }
+
         private void OnReferenceDetected(object sender, ReferenceDetectedEventArgs e)
         {
             // Marshal to the UI thread via the SynchronizationContext captured when
@@ -120,18 +164,65 @@ namespace WorshipHelperVSTO
                         return;
                     }
 
-                    using (var toast = new SpeechConfirmForm(e.NormalisedReference))
+                    // If a preliminary toast is already on screen (chapter-only
+                    // path), EDIT it in place with the richer reference rather
+                    // than opening a second popup on top.
+                    if (_activeToast != null && !_activeToast.IsDisposed)
                     {
-                        toast.ShowDialog();
-                        if (!toast.Confirmed) return;
-                        InsertReference(toast.Reference);
+                        _activeToast.UpdateReference(e.NormalisedReference);
+                        return;
                     }
+
+                    ShowToast(e.NormalisedReference);
                 }
                 catch (System.Exception ex)
                 {
                     log4net.LogManager.GetLogger(typeof(TestRibbonItem)).Error("Speech toast failed", ex);
                 }
             }, null);
+        }
+
+        /// <summary>
+        /// Opens the speech confirmation toast MODELESSLY so further detections
+        /// can update the visible text in place. The previous implementation used
+        /// ShowDialog(), which blocked the UI thread and forced every new detection
+        /// to stack a fresh popup — and, critically, caused the presenter-view
+        /// Ctrl/Shift hotkeys to stop working for the lifetime of the toast.
+        /// </summary>
+        private void ShowToast(string reference)
+        {
+            var toast = new SpeechConfirmForm(reference);
+            _activeToast = toast;
+
+            toast.ReferenceConfirmed += (s, finalRef) =>
+            {
+                try { InsertReference(finalRef); }
+                catch (System.Exception ex)
+                {
+                    log4net.LogManager.GetLogger(typeof(TestRibbonItem))
+                        .Error("Speech insert (from toast) failed", ex);
+                }
+            };
+
+            toast.Dismissed += (s, ev) =>
+            {
+                // User explicitly cancelled — drop any pending chapter-only so it
+                // doesn't suddenly reappear when the grace window elapses.
+                try { _speechService?.CancelPendingReference(); }
+                catch { /* non-fatal */ }
+            };
+
+            toast.FormClosed += (s, ev) =>
+            {
+                if (ReferenceEquals(_activeToast, s)) _activeToast = null;
+                // We're no longer using a `using` block (that required ShowDialog);
+                // dispose explicitly when the form closes so native handles are
+                // cleaned up immediately rather than at next GC.
+                try { (s as System.Windows.Forms.Form)?.Dispose(); }
+                catch { /* already disposing — ignore */ }
+            };
+
+            toast.Show(); // modeless, non-activating
         }
 
         private void InsertReference(string normalisedReference)

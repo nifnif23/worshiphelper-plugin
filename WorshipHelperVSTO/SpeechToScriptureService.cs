@@ -199,6 +199,22 @@ namespace WorshipHelperVSTO
         public event EventHandler<ReferenceDetectedEventArgs> OnReferenceDetected;
 
         /// <summary>
+        /// Fired as soon as a chapter-only reference (e.g. "Genesis 1") is
+        /// heard, BEFORE the chapter-only grace window expires. Subscribers
+        /// can use this to show an immediate notification so the presenter
+        /// gets instant visual feedback that the mic heard them.
+        ///
+        /// If the chapter-only detection is later upgraded to a richer
+        /// reference (e.g. "Genesis 1:5" after the minister says "verse
+        /// five"), <see cref="OnReferenceDetected"/> will fire with the
+        /// richer reference. Subscribers are expected to EDIT their existing
+        /// notification rather than opening a second one.
+        ///
+        /// Also fires on a background thread — marshal as needed.
+        /// </summary>
+        public event EventHandler<ReferenceDetectedEventArgs> OnReferencePreliminary;
+
+        /// <summary>
         /// Fired for every raw phrase the speech engine hears, before reference detection.
         /// Useful for diagnostics — lets you see what the mic is actually picking up.
         /// </summary>
@@ -410,6 +426,11 @@ namespace WorshipHelperVSTO
                 if (!hasVerse && ChapterOnlyGraceMs > 0)
                 {
                     StashPendingChapterOnly(detected, e.Text, e.Confidence);
+                    // Let the UI show an immediate "Heard Genesis 1" notification.
+                    // If a verse arrives before grace expires, OnReferenceDetected
+                    // will fire with the richer "Genesis 1:5" and the UI should
+                    // edit the same notification in place.
+                    RaisePreliminary(detected, e.Text, e.Confidence);
                     return;
                 }
 
@@ -426,6 +447,36 @@ namespace WorshipHelperVSTO
             catch (Exception ex)
             {
                 log.Error("Pipeline: Unhandled exception in speech processing.", ex);
+            }
+        }
+
+        /// <summary>
+        /// Fires the preliminary "heard something" event for a chapter-only
+        /// detection that has been stashed for the grace window. Applies the
+        /// same combined-confidence threshold as the main fire path so the
+        /// toast never pops for a borderline detection that we'd ultimately
+        /// have thrown away.
+        /// </summary>
+        private void RaisePreliminary(DetectedReference detected, string spokenText, float speechConfidence)
+        {
+            if (detected == null) return;
+            try
+            {
+                double combined = (speechConfidence * 0.4) + (detected.Confidence * 0.6);
+                if (combined < MinCombinedConfidence) return;
+
+                OnReferencePreliminary?.Invoke(this, new ReferenceDetectedEventArgs
+                {
+                    NormalisedReference = detected.NormalisedReference,
+                    BookName            = detected.BookName,
+                    ReferenceFragment   = detected.ReferenceFragment,
+                    SpokenText          = spokenText,
+                    Confidence          = combined,
+                });
+            }
+            catch (Exception ex)
+            {
+                log.Debug($"Pipeline: OnReferencePreliminary subscriber threw: {ex.Message}");
             }
         }
 

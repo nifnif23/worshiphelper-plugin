@@ -95,16 +95,26 @@ namespace WorshipHelperVSTO
                     var hookStruct = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(KBDLLHOOKSTRUCT));
                     int vkCode = hookStruct.vkCode;
 
-                    bool formOpen = System.Windows.Forms.Application.OpenForms.Count > 0;
-                    if (formOpen)
-                    {
-                        log.Debug("Ignoring key press while form open");
-                        return SafeNativeMethods.CallNextHookEx(_hookIdKeyboard, nCode, wParam, lParam);
-                    }
-
                     DocumentWindow presenterView = new WindowManager().GetPresenterView();
                     bool presenting = presenterView != null &&
                                       presenterView.Active == Microsoft.Office.Core.MsoTriState.msoTrue;
+
+                    // FIX: The previous "formOpen" check blanket-suppressed ALL hotkeys whenever
+                    // ANY WinForms form was open — which meant that once the speech listener
+                    // popped up the SpeechConfirmForm toast (or the user opened the Speech
+                    // debug panel), the Ctrl / Shift shortcuts stopped working in presenter
+                    // view and stayed broken for the life of that form.
+                    //
+                    // We only want to suppress hotkeys when the user is actively editing inside
+                    // one of OUR modal forms (AddContentLiveForm / InsertScriptureForm) where
+                    // typing plain Ctrl/Shift would otherwise clash with text entry. The toast
+                    // and the debug panel are lightweight status surfaces — the user still
+                    // expects presenter-view shortcuts to work while they're visible.
+                    if (!presenting && ShouldBlockHotkeysForOpenForm())
+                    {
+                        log.Debug("Ignoring key press while blocking form is open (not presenting)");
+                        return SafeNativeMethods.CallNextHookEx(_hookIdKeyboard, nCode, wParam, lParam);
+                    }
 
                     if (presenting)
                     {
@@ -168,6 +178,44 @@ namespace WorshipHelperVSTO
             }
 
             return SafeNativeMethods.CallNextHookEx(_hookIdKeyboard, nCode, wParam, lParam);
+        }
+
+        /// <summary>
+        /// Returns true if a form that should swallow our global hotkeys is currently open.
+        ///
+        /// Forms that SHOULD block hotkeys (user is actively typing/interacting):
+        ///   - AddContentLiveForm      (Ctrl shortcut target)
+        ///   - InsertScriptureForm     (manual scripture picker)
+        ///   - Any other modal dialog we own
+        ///
+        /// Forms that should NOT block hotkeys (status / passive surfaces):
+        ///   - SpeechConfirmForm       (toast notification — has its own Enter/Esc handling)
+        ///   - SpeechDebugPanel        (passive monitoring window)
+        ///
+        /// This fixes the regression where beginning speech listening (which pops a toast
+        /// after each detection) would permanently disable Ctrl/Shift in presenter view.
+        /// </summary>
+        private static bool ShouldBlockHotkeysForOpenForm()
+        {
+            try
+            {
+                foreach (Form f in System.Windows.Forms.Application.OpenForms)
+                {
+                    if (f == null || !f.Visible) continue;
+                    // Passive surfaces — do not block.
+                    if (f is SpeechConfirmForm) continue;
+                    if (f is SpeechDebugPanel)  continue;
+                    // Anything else we own (AddContentLiveForm, InsertScriptureForm, …)
+                    // is a modal input form and should block.
+                    return true;
+                }
+            }
+            catch
+            {
+                // Never let enumeration errors take down the hook. If in doubt, do not
+                // block — we'd rather a stray hotkey than a frozen presenter view.
+            }
+            return false;
         }
 
         private void ShowAddContentLiveForm()
