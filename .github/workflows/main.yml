@@ -6,8 +6,6 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   VOSK_MODEL_URL: https://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip
-  # Change this key only when switching to a different model version.
-  # Keeping it the same means the 1.8 GB model is cached and never re-downloaded.
   VOSK_MODEL_CACHE_KEY: vosk-model-en-us-0.22
 
 jobs:
@@ -40,19 +38,18 @@ jobs:
           $vosk = Get-ChildItem "$packagesDir\Vosk.*\lib" -Recurse -Filter "Vosk.dll" |
             Sort-Object { $_.FullName } | Select-Object -Last 1
 
-          if (-not $naudioCore) { throw "NAudio.Core.dll not found under $packagesDir" }
-          if (-not $naudioWinMM) { throw "NAudio.WinMM.dll not found under $packagesDir" }
-          if (-not $vosk)        { throw "Vosk.dll not found under $packagesDir" }
+          if (-not $naudioCore) { throw "NAudio.Core.dll not found" }
+          if (-not $naudioWinMM) { throw "NAudio.WinMM.dll not found" }
+          if (-not $vosk)        { throw "Vosk.dll not found" }
 
           echo "NAUDIO_CORE_PATH=$($naudioCore.FullName)"   >> $env:GITHUB_ENV
           echo "NAUDIO_WINMM_PATH=$($naudioWinMM.FullName)" >> $env:GITHUB_ENV
           echo "VOSK_PATH=$($vosk.FullName)"                >> $env:GITHUB_ENV
 
       # -----------------------------------------------------------------------
-      # Vosk model cache.
-      # Cache hit  = restore extracted folder instantly, skip download entirely.
-      # Cache miss = download 1.8 GB zip, extract, cache for every future run.
-      # The cache persists across runs until the cache key changes.
+      # Cache hit  = instant restore, no download ever again
+      # Cache miss = download once, cache persists for all future runs
+      # To switch models: change VOSK_MODEL_CACHE_KEY above
       # -----------------------------------------------------------------------
       - name: Restore Vosk model from cache
         id: cache-vosk-model
@@ -66,26 +63,13 @@ jobs:
         run: |
           $modelZip  = "$env:TEMP\vosk-model.zip"
           $modelDest = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\data\vosk-model"
-
-          Write-Host "Cache miss — downloading Vosk model (~1.8 GB). This only happens once."
+          Write-Host "Cache miss — downloading (~1.8 GB). Only happens once."
           Invoke-WebRequest -Uri $env:VOSK_MODEL_URL -OutFile $modelZip -UseBasicParsing
-
-          Write-Host "Extracting..."
           Expand-Archive -Path $modelZip -DestinationPath "$env:TEMP\vosk-extracted" -Force
-
           $inner = Get-ChildItem "$env:TEMP\vosk-extracted" | Select-Object -First 1
           New-Item -ItemType Directory -Force -Path (Split-Path $modelDest) | Out-Null
           Move-Item -Path $inner.FullName -Destination $modelDest -Force
           Write-Host "Done."
-
-      - name: Verify Vosk model present
-        run: |
-          $modelDest = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\data\vosk-model"
-          if (-not (Test-Path $modelDest)) {
-            throw "Vosk model not found at $modelDest"
-          }
-          $n = (Get-ChildItem $modelDest -Recurse -File).Count
-          Write-Host "Vosk model OK: $n files"
 
       - name: Generate self-signed certificate
         run: |
@@ -151,6 +135,18 @@ jobs:
           Get-ChildItem $voskDir -Filter "*.dll" | ForEach-Object {
             Copy-Item $_.FullName $targetDir -Force
           }
+
+      # -----------------------------------------------------------------------
+      # Copy model from data\vosk-model (repo/cache location) into
+      # bin\Release\data\vosk-model so heat.exe can find it for harvesting.
+      # -----------------------------------------------------------------------
+      - name: Copy Vosk model to bin\Release
+        run: |
+          $src  = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\data\vosk-model"
+          $dest = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\bin\Release\data\vosk-model"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Copy-Item -Path "$src\*" -Destination $dest -Recurse -Force
+          Write-Host "Model copied to bin\Release: $((Get-ChildItem $dest -Recurse -File).Count) files"
 
       - name: Publish VSTO (With Signing)
         run: |
