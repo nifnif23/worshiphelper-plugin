@@ -44,7 +44,6 @@ jobs:
           echo "NAUDIO_WINMM_PATH=$($naudioWinMM.FullName)" >> $env:GITHUB_ENV
           echo "VOSK_PATH=$($vosk.FullName)"                >> $env:GITHUB_ENV
 
-
       - name: Generate self-signed certificate
         run: |
           $cert = New-SelfSignedCertificate `
@@ -136,29 +135,13 @@ jobs:
           foreach ($ref in $refs) { $ref.ParentNode.RemoveChild($ref) | Out-Null }
           $xml.Save((Resolve-Path $wixproj))
 
-      - name: Harvest Vosk model into WiX fragment
-        run: |
-          $heatExe  = Get-ChildItem "$env:WIX\bin" -Filter "heat.exe" | Select-Object -First 1 -ExpandProperty FullName
-          $modelDir = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\bin\Release\data\vosk-model"
-          $outFile  = "$env:GITHUB_WORKSPACE\WorshipHelperSetup\VoskModel.wxs"
+      # -----------------------------------------------------------------------
+      # No model harvesting — the existing installation already has the model.
+      # We just build and publish the updated VSTO DLL. The MSI update will
+      # overwrite the add-in files without touching the vosk-model directory.
+      # -----------------------------------------------------------------------
 
-          & $heatExe dir $modelDir -nologo -sfrag -srd -sreg -gg -cg VoskModelFiles -dr VOSK_MODEL_DIR -out $outFile
-
-          $raw = Get-Content $outFile -Raw
-          $raw = $raw.Replace('SourceDir\', "$modelDir\")
-          Set-Content $outFile $raw -Encoding UTF8
-
-          $wixproj = "WorshipHelperSetup\WorshipHelperSetup.wixproj"
-          [xml]$xml = Get-Content $wixproj
-          $ns = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
-          $ns.AddNamespace("ms", "http://schemas.microsoft.com/developer/msbuild/2003")
-          $ig = $xml.SelectSingleNode("//ms:ItemGroup[ms:Compile]", $ns)
-          $el = $xml.CreateElement("Compile", "http://schemas.microsoft.com/developer/msbuild/2003")
-          $el.SetAttribute("Include", "VoskModel.wxs")
-          $ig.AppendChild($el) | Out-Null
-          $xml.Save((Resolve-Path $wixproj))
-
-      - name: Build MSI
+      - name: Build MSI (no model)
         run: |
           $targetDir = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\bin\Release\"
           msbuild WorshipHelperSetup\WorshipHelperSetup.wixproj `
