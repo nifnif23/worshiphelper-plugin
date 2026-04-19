@@ -312,7 +312,6 @@ namespace WorshipHelperVSTO
         {
             int total = 0;
             bool foundAny = false;
-            bool prevWasHundred = false;
 
             for (int i = 0; i < tokens.Count; i++)
             {
@@ -337,15 +336,12 @@ namespace WorshipHelperVSTO
 
                 if (val == 100)
                 {
-                    // "one hundred" or just "hundred"
                     if (total == 0) total = 1;
                     total *= 100;
-                    prevWasHundred = true;
                 }
                 else
                 {
                     total += val;
-                    prevWasHundred = false;
                 }
 
                 foundAny = true;

@@ -258,6 +258,8 @@ namespace WorshipHelperVSTO
                 {
                     btnToggleSpeech.Image = global::WorshipHelperVSTO.Properties.Resources.mic;
                     btnToggleSpeech.Label = "Listen";
+                    // Turning off listening also kills auto scripture mode
+                    AutoScriptureMode.Instance.Disable();
                 }
 
                 if (_debugPanel != null && !_debugPanel.IsDisposed)

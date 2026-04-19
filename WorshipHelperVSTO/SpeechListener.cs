@@ -88,6 +88,33 @@ namespace WorshipHelperVSTO
         private readonly object _lock = new object();
 
         // -------------------------------------------------------------------------
+        // Two-phase recognition state
+        //
+        // Phase 1 (SCAN): broad grammar — all book names + number words.
+        //   Vosk listens for any book name. As soon as one fires, switch to phase 2.
+        //
+        // Phase 2 (FOCUS): hyper-tight grammar — ONLY the detected book's name
+        //   variants + number words + structure words. ~50-70 words max.
+        //   Vosk has almost nowhere else to go, so chapter/verse numbers come
+        //   out cleanly.
+        //
+        // After phase 2 fires (or after a timeout), revert to phase 1.
+        //
+        // Why this works:
+        //   Big vocab → Vosk picks nearest-sounding common word for rare names.
+        //   e.g. "zechariah four nine" → "zakariah four night" (near-miss).
+        //   Focused vocab → only zechariah variants + numbers in scope.
+        //   "zechariah four nine" → "zechariah four nine". Done.
+        // -------------------------------------------------------------------------
+        private Model _model;                    // loaded once, shared across phases
+        private string _phase2BookName;          // canonical book name we locked onto
+        private System.Threading.Timer _phase2Timeout; // revert to phase 1 after idle
+        private const int Phase2TimeoutMs = 4000;      // 4s with no result → back to scan
+
+        private enum RecognitionPhase { Scan, Focus }
+        private RecognitionPhase _currentPhase = RecognitionPhase.Scan;
+
+        // -------------------------------------------------------------------------
         // Configuration
         // -------------------------------------------------------------------------
 
@@ -139,8 +166,10 @@ namespace WorshipHelperVSTO
 
                     Vosk.Vosk.SetLogLevel(-1);
 
-                    var model = new Model(ModelPath);
-                    _recogniser = new VoskRecognizer(model, 16000f, BuildBibleGrammar());
+                    _model = new Model(ModelPath);
+                    _currentPhase = RecognitionPhase.Scan;
+                    _phase2BookName = null;
+                    _recogniser = new VoskRecognizer(_model, 16000f, BuildScanGrammar());
                     _recogniser.SetMaxAlternatives(0);
                     _recogniser.SetWords(true);
 
@@ -285,21 +314,52 @@ namespace WorshipHelperVSTO
             string rawText = textMatch.Groups[1].Value.Trim();
             if (string.IsNullOrWhiteSpace(rawText)) return;
 
-            // Rationalise: strip [unk] tokens, normalise spoken punctuation, etc.
             string rationalised = RationaliseVoskOutput(rawText);
             if (string.IsNullOrWhiteSpace(rationalised)) return;
 
-            // Phonetic correction: fix systematic Vosk mishearings before detection.
-            // e.g. "zechariah fight for tea night" → "zechariah four three nine"
             string text = PhoneticCorrector.Correct(rationalised);
-
             float confidence = ExtractAverageConfidence(json);
 
             if (rawText != text)
                 log.Debug($"SpeechListener: raw=\"{rawText}\" → corrected=\"{text}\" (conf={confidence:F2})");
             else
-                log.Debug($"SpeechListener (Vosk): \"{text}\" (conf={confidence:F2})");
+                log.Debug($"SpeechListener (Vosk) [{_currentPhase}]: \"{text}\" (conf={confidence:F2})");
 
+            // -----------------------------------------------------------------------
+            // Two-phase dispatch
+            // -----------------------------------------------------------------------
+            if (_currentPhase == RecognitionPhase.Scan)
+            {
+                // Phase 1: look for any book name trigger in the output.
+                // If found, switch to hyper-focused phase 2 for that book and
+                // re-process this same utterance immediately — we already have it.
+                string triggeredBook = DetectBookTrigger(text);
+                if (triggeredBook != null)
+                {
+                    log.Debug($"SpeechListener: Scan triggered on \"{triggeredBook}\" — switching to Focus phase.");
+                    SwitchToFocusPhase(triggeredBook);
+
+                    // Re-process this utterance now that we're in focus phase.
+                    // The focus grammar would have produced cleaner output, but we
+                    // already have the corrected text so run it through the pipeline.
+                    FireIfConfident(text, confidence);
+                }
+                // If no book detected in scan phase, do nothing — wait for next utterance.
+            }
+            else
+            {
+                // Phase 2: we're focused on a specific book.
+                // Whatever comes out is our best shot at the reference.
+                // Reset the timeout, fire if confident, then snap back to scan.
+                ResetPhase2Timeout();
+                FireIfConfident(text, confidence);
+                // Revert immediately after firing so we're ready for the next reference
+                SwitchToScanPhase();
+            }
+        }
+
+        private void FireIfConfident(string text, float confidence)
+        {
             if (confidence < MinEngineConfidence)
             {
                 log.Debug($"SpeechListener: Below MinEngineConfidence ({MinEngineConfidence:F2}), ignoring.");
@@ -311,6 +371,94 @@ namespace WorshipHelperVSTO
                 Text = text,
                 Confidence = confidence,
             });
+        }
+
+        // -----------------------------------------------------------------------
+        // Two-phase helpers
+        // -----------------------------------------------------------------------
+
+        /// <summary>
+        /// Scans corrected text for any known book name or phonetic variant.
+        /// Returns the canonical book name if found, null otherwise.
+        /// Uses the same BibleReferenceDetector book matching so it's consistent.
+        /// </summary>
+        private static string DetectBookTrigger(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return null;
+            var detected = BibleReferenceDetector.DetectBest(text);
+            return detected?.BookName;
+        }
+
+        /// <summary>
+        /// Switches the recogniser to a hyper-tight grammar focused on one book.
+        /// The new recogniser uses the same loaded model — no disk I/O.
+        /// </summary>
+        private void SwitchToFocusPhase(string canonicalBookName)
+        {
+            lock (_lock)
+            {
+                if (_model == null) return;
+
+                try
+                {
+                    _recogniser?.Dispose();
+                    _recogniser = new VoskRecognizer(
+                        _model, 16000f,
+                        BuildFocusGrammar(canonicalBookName));
+                    _recogniser.SetMaxAlternatives(0);
+                    _recogniser.SetWords(true);
+
+                    _currentPhase   = RecognitionPhase.Focus;
+                    _phase2BookName = canonicalBookName;
+
+                    log.Info($"SpeechListener: Focus phase — locked to \"{canonicalBookName}\".");
+                }
+                catch (Exception ex)
+                {
+                    log.Warn($"SpeechListener: Failed to switch to focus phase: {ex.Message}");
+                }
+            }
+
+            ResetPhase2Timeout();
+        }
+
+        /// <summary>
+        /// Reverts to scan phase (broad grammar).
+        /// Called after phase 2 fires or after the idle timeout.
+        /// </summary>
+        private void SwitchToScanPhase()
+        {
+            lock (_lock)
+            {
+                if (_model == null || _currentPhase == RecognitionPhase.Scan) return;
+
+                try
+                {
+                    _recogniser?.Dispose();
+                    _recogniser = new VoskRecognizer(_model, 16000f, BuildScanGrammar());
+                    _recogniser.SetMaxAlternatives(0);
+                    _recogniser.SetWords(true);
+
+                    _currentPhase   = RecognitionPhase.Scan;
+                    _phase2BookName = null;
+
+                    log.Debug("SpeechListener: Reverted to Scan phase.");
+                }
+                catch (Exception ex)
+                {
+                    log.Warn($"SpeechListener: Failed to revert to scan phase: {ex.Message}");
+                }
+            }
+        }
+
+        private void ResetPhase2Timeout()
+        {
+            _phase2Timeout?.Dispose();
+            _phase2Timeout = new System.Threading.Timer(_ =>
+            {
+                log.Debug("SpeechListener: Phase 2 timeout — reverting to scan.");
+                SwitchToScanPhase();
+            }, null, Phase2TimeoutMs, System.Threading.Timeout.Infinite);
         }
 
         private static float ExtractAverageConfidence(string json)
@@ -355,33 +503,20 @@ namespace WorshipHelperVSTO
         // Grammar
         // -------------------------------------------------------------------------
 
+        // -------------------------------------------------------------------------
+        // Grammars
+        // -------------------------------------------------------------------------
+
         /// <summary>
-        /// Builds a JSON word-list that constrains Vosk to only scripture-relevant
-        /// vocabulary.
-        ///
-        /// Design decisions:
-        ///
-        /// 1. PREAMBLE WORDS REMOVED — words like "read", "turn", "open", "today"
-        ///    were in the original grammar to handle spoken preamble ("let's turn to
-        ///    John 3:16"). However they give Vosk more phoneme targets to land on,
-        ///    causing mishearings. The BibleReferenceDetector strips preamble anyway.
-        ///    Removing them forces Vosk to commit to [unk] for non-scripture speech,
-        ///    which is the desired behaviour (suppresses false references).
-        ///
-        /// 2. PHONETIC NEAR-MISSES ADDED — common mishearings that PhoneticCorrector
-        ///    knows how to fix. Including them in the grammar means Vosk outputs the
-        ///    near-miss directly (which we then correct) instead of something totally
-        ///    unrelated. e.g. "night" for "nine", "heaven" for "seven", "tea" for "three".
-        ///
-        /// 3. [unk] RETAINED — essential escape hatch for off-topic speech.
+        /// Phase 1 (SCAN) grammar: all book name variants + number words.
+        /// Broad enough to catch any book name, including phonetic near-misses.
+        /// When a book name fires here, we switch to the focused phase 2 grammar.
         /// </summary>
-        private static string BuildBibleGrammar()
+        private static string BuildScanGrammar()
         {
             var words = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
-                // ── Book name words (OT) ───────────────────────────────────────
-                // Full names only — no abbreviations (they give Vosk false targets
-                // and are never spoken aloud in a normal service context).
+                // ── All book name words + phonetic variants (OT) ───────────────
                 "genesis",
                 "exodus",
                 "leviticus",
@@ -416,13 +551,12 @@ namespace WorshipHelperVSTO
                 "habakkuk","habakuk","habacuc","habacuk",
                 "zephaniah","zefaniah","zefania",
                 "haggai","hagai",
-                // Zechariah phonetic variants — critical for Nigerian accent
-                "zechariah",
-                "zachariah","zacharia","zakaria","zakariah",
-                "zekaria","zekariah","zecharia","zecharias","zacharias",
+                // Zechariah — all phonetic variants so ANY mishearing triggers phase 2
+                "zechariah","zachariah","zacharia","zakaria",
+                "zakariah","zekaria","zekariah","zecharia","zecharias","zacharias",
                 "malachi","malaki",
 
-                // ── Book name words (NT) ───────────────────────────────────────
+                // ── All book name words (NT) ───────────────────────────────────
                 "matthew","mathew","mathieu",
                 "mark",
                 "luke",
@@ -446,9 +580,9 @@ namespace WorshipHelperVSTO
 
                 // ── Numbered-book prefixes ─────────────────────────────────────
                 "first","second","third",
-                "of",   // "song of solomon"
+                "of",
 
-                // ── Number words (canonical) ───────────────────────────────────
+                // ── Number words (needed so whole references in one utterance work) ──
                 "zero","oh","o",
                 "one","two","three","four","five",
                 "six","seven","eight","nine","ten",
@@ -458,47 +592,165 @@ namespace WorshipHelperVSTO
                 "sixty","seventy","eighty","ninety",
                 "hundred",
 
-                // ── Phonetic near-misses for number words ──────────────────────
-                // These are the words Vosk outputs when it mishears number words.
-                // PhoneticCorrector maps them back. Including them here ensures
-                // Vosk at least outputs SOMETHING we can fix, rather than [unk].
-                "night",    // → nine   (/naɪt/ ≈ /naɪn/)
-                "tea",      // → three  (/tiː/ ≈ /θriː/)
-                "tree",     // → three
-                "free",     // → three  (f/th confusion)
-                "heaven",   // → seven  (h+even ≈ s+even)
-                "fore",     // → four
-                "sex",      // → six    (/sɛks/ ≈ /sɪks/)
-                "ate",      // → eight  (homophone)
-                "won",      // → one    (homophone)
-                "too",      // → two    (homophone)
-                "fight",    // → used in "fight for" → four
+                // ── Phonetic near-misses for numbers ──────────────────────────
+                "night","tea","tree","free","heaven","fore",
+                "sex","ate","won","too","fight",
 
-                // ── Reference connector / structure words ──────────────────────
-                "chapter","chapters",
-                "verse","verses",
+                // ── Structure words ────────────────────────────────────────────
+                "chapter","chapters","verse","verses",
                 "through","to","and","colon","dash","hyphen",
-
-                // ── Minimal preamble — only the highest-signal words kept ──────
-                // Removed: "read","turn","open","look","go","find","let","lets",
-                //          "us","please","now","okay","ok","the","book","passage",
-                //          "text","today","tonight","this","morning","evening",
-                //          "says","we're","i'm","from","at","in"
-                // These had no detection value and gave Vosk extra false targets.
-                "scripture",  // keep — unambiguous signal of intent
-
-                // ── Unknown-word escape hatch ──────────────────────────────────
+                "scripture",
                 "[unk]",
             };
 
-            // Also add digit strings 1–176 (max Bible verse number).
-            // Vosk can output these even in grammar mode, and WordsToNumber
-            // already handles digit strings via int.TryParse.
-            for (int n = 1; n <= 176; n++)
-                words.Add(n.ToString());
+            for (int n = 1; n <= 176; n++) words.Add(n.ToString());
+            var quoted = words.OrderBy(w => w).Select(w => $"\"{w.Replace("\"", "\\\"")}\"");
+            return "[" + string.Join(",", quoted) + "]";
+        }
+
+        /// <summary>
+        /// Phase 2 (FOCUS) grammar: hyper-tight — only the specific book's name
+        /// variants + number words + structure words. ~50-70 words max.
+        ///
+        /// Vosk has almost nowhere else to go, so chapter/verse numbers come out
+        /// cleanly. e.g. for Zechariah the grammar is just zechariah variants +
+        /// number words — "four nine" can only map to "four" and "nine".
+        ///
+        /// This answers the "what if zechariah itself isn't heard in scan phase"
+        /// question: the scan grammar includes ALL phonetic variants of zechariah
+        /// (zachariah, zacharia, zakaria, zekaria, etc.). Any of them triggers
+        /// phase 2. Phase 2 then uses those same variants so whatever vosk outputs
+        /// for the book name still matches correctly.
+        /// </summary>
+        private static string BuildFocusGrammar(string canonicalBookName)
+        {
+            var words = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            // Add the specific book's canonical name and all known variants
+            foreach (var variant in GetBookVariants(canonicalBookName))
+                words.Add(variant);
+
+            // Numbered book prefix words if needed
+            if (canonicalBookName.Length > 1 && char.IsDigit(canonicalBookName[0]))
+            {
+                words.Add("first"); words.Add("second"); words.Add("third");
+            }
+
+            // "of" for Song of Solomon
+            if (canonicalBookName == "Song of Solomon")
+            {
+                words.Add("song"); words.Add("of"); words.Add("solomon"); words.Add("songs");
+            }
+
+            // Number words — the whole point of phase 2
+            foreach (var w in new[]
+            {
+                "zero","oh","o",
+                "one","two","three","four","five",
+                "six","seven","eight","nine","ten",
+                "eleven","twelve","thirteen","fourteen","fifteen",
+                "sixteen","seventeen","eighteen","nineteen",
+                "twenty","thirty","forty","fifty",
+                "sixty","seventy","eighty","ninety","hundred",
+                // phonetic near-misses
+                "night","tea","tree","free","heaven","fore",
+                "sex","ate","won","too","fight",
+                // structure
+                "chapter","chapters","verse","verses",
+                "through","to","and","colon","dash","hyphen",
+                "[unk]",
+            })
+                words.Add(w);
+
+            for (int n = 1; n <= 176; n++) words.Add(n.ToString());
 
             var quoted = words.OrderBy(w => w).Select(w => $"\"{w.Replace("\"", "\\\"")}\"");
             return "[" + string.Join(",", quoted) + "]";
+        }
+
+        /// <summary>
+        /// Returns all spoken variants for a canonical book name.
+        /// Mirrors BibleReferenceDetector's variant list so they're always in sync.
+        /// </summary>
+        private static readonly Dictionary<string, string[]> BookVariantsMap =
+            new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            { "Genesis",          new[]{ "genesis" } },
+            { "Exodus",           new[]{ "exodus" } },
+            { "Leviticus",        new[]{ "leviticus" } },
+            { "Numbers",          new[]{ "numbers" } },
+            { "Deuteronomy",      new[]{ "deuteronomy","deutronomy","duteronomy" } },
+            { "Joshua",           new[]{ "joshua" } },
+            { "Judges",           new[]{ "judges" } },
+            { "Ruth",             new[]{ "ruth" } },
+            { "1 Samuel",         new[]{ "samuel","sam" } },
+            { "2 Samuel",         new[]{ "samuel","sam" } },
+            { "1 Kings",          new[]{ "kings","king" } },
+            { "2 Kings",          new[]{ "kings","king" } },
+            { "1 Chronicles",     new[]{ "chronicles","chron" } },
+            { "2 Chronicles",     new[]{ "chronicles","chron" } },
+            { "Ezra",             new[]{ "ezra" } },
+            { "Nehemiah",         new[]{ "nehemiah","nehemia","nehimiah","nehimia" } },
+            { "Esther",           new[]{ "esther" } },
+            { "Job",              new[]{ "job" } },
+            { "Psalms",           new[]{ "psalms","psalm","salms","sams" } },
+            { "Proverbs",         new[]{ "proverbs","proverb" } },
+            { "Ecclesiastes",     new[]{ "ecclesiastes","ecclesiaste" } },
+            { "Song of Solomon",  new[]{ "song","songs","solomon" } },
+            { "Isaiah",           new[]{ "isaiah","esaiah","isaia" } },
+            { "Jeremiah",         new[]{ "jeremiah","jeremia","jerimiah","jerimia" } },
+            { "Lamentations",     new[]{ "lamentations","lamentation" } },
+            { "Ezekiel",          new[]{ "ezekiel","ezekia","ezekel" } },
+            { "Daniel",           new[]{ "daniel" } },
+            { "Hosea",            new[]{ "hosea","hosia" } },
+            { "Joel",             new[]{ "joel" } },
+            { "Amos",             new[]{ "amos" } },
+            { "Obadiah",          new[]{ "obadiah","obadia","obadiya" } },
+            { "Jonah",            new[]{ "jonah" } },
+            { "Micah",            new[]{ "micah","mica" } },
+            { "Nahum",            new[]{ "nahum" } },
+            { "Habakkuk",         new[]{ "habakkuk","habakuk","habacuc","habacuk" } },
+            { "Zephaniah",        new[]{ "zephaniah","zefaniah","zefania" } },
+            { "Haggai",           new[]{ "haggai","hagai" } },
+            { "Zechariah",        new[]{ "zechariah","zachariah","zacharia","zakaria",
+                                         "zakariah","zekaria","zekariah","zecharia",
+                                         "zecharias","zacharias" } },
+            { "Malachi",          new[]{ "malachi","malaki" } },
+            { "Matthew",          new[]{ "matthew","mathew","mathieu" } },
+            { "Mark",             new[]{ "mark" } },
+            { "Luke",             new[]{ "luke" } },
+            { "John",             new[]{ "john" } },
+            { "Acts",             new[]{ "acts" } },
+            { "Romans",           new[]{ "romans" } },
+            { "1 Corinthians",    new[]{ "corinthians","corinthian" } },
+            { "2 Corinthians",    new[]{ "corinthians","corinthian" } },
+            { "Galatians",        new[]{ "galatians","galatian" } },
+            { "Ephesians",        new[]{ "ephesians","ephesian" } },
+            { "Philippians",      new[]{ "philippians","philippian","philipians","philipian" } },
+            { "Colossians",       new[]{ "colossians","colossian","colosians","colosian" } },
+            { "1 Thessalonians",  new[]{ "thessalonians","thessalonian" } },
+            { "2 Thessalonians",  new[]{ "thessalonians","thessalonian" } },
+            { "1 Timothy",        new[]{ "timothy","timoty" } },
+            { "2 Timothy",        new[]{ "timothy","timoty" } },
+            { "Titus",            new[]{ "titus" } },
+            { "Philemon",         new[]{ "philemon","filemon" } },
+            { "Hebrews",          new[]{ "hebrews","hebrew" } },
+            { "James",            new[]{ "james" } },
+            { "1 Peter",          new[]{ "peter" } },
+            { "2 Peter",          new[]{ "peter" } },
+            { "1 John",           new[]{ "john" } },
+            { "2 John",           new[]{ "john" } },
+            { "3 John",           new[]{ "john" } },
+            { "Jude",             new[]{ "jude" } },
+            { "Revelation",       new[]{ "revelation","revelations","revelacion","revelasion" } },
+        };
+
+        private static IEnumerable<string> GetBookVariants(string canonicalBookName)
+        {
+            if (BookVariantsMap.TryGetValue(canonicalBookName, out var variants))
+                return variants;
+            // Fallback: just lowercase canonical
+            return new[] { canonicalBookName.ToLowerInvariant() };
         }
 
         // -------------------------------------------------------------------------
@@ -506,6 +758,11 @@ namespace WorshipHelperVSTO
 
         private void CleanupEngine()
         {
+            _phase2Timeout?.Dispose();
+            _phase2Timeout = null;
+            _currentPhase  = RecognitionPhase.Scan;
+            _phase2BookName = null;
+
             if (_waveIn != null)
             {
                 try
@@ -523,6 +780,13 @@ namespace WorshipHelperVSTO
                 try { _recogniser.Dispose(); }
                 catch (Exception ex) { log.Warn("SpeechListener: Error disposing recogniser.", ex); }
                 _recogniser = null;
+            }
+
+            if (_model != null)
+            {
+                try { _model.Dispose(); }
+                catch (Exception ex) { log.Warn("SpeechListener: Error disposing model.", ex); }
+                _model = null;
             }
         }
 

@@ -304,63 +304,14 @@ namespace WorshipHelperVSTO
 {
     public partial class TestRibbonItem
     {
-        // ── Ribbon button: toggle speech listening ────────────────────────────
-        // Wire to a ToggleButton named "btnSpeechListen" in the ribbon designer.
-
-        private void btnSpeechListen_Click(object sender, Microsoft.Office.Tools.Ribbon.RibbonControlEventArgs e)
-        {
-            try
-            {
-                var service = Globals.ThisAddIn.SpeechService;
-                if (service == null)
-                {
-                    System.Windows.Forms.MessageBox.Show(
-                        "Speech service is not available. Please check that a microphone " +
-                        "is connected and Windows Speech Recognition is enabled.",
-                        "Speech Service",
-                        System.Windows.Forms.MessageBoxButtons.OK,
-                        System.Windows.Forms.MessageBoxIcon.Warning);
-                    return;
-                }
-
-                bool nowListening = service.Toggle();
-
-                var btn = sender as Microsoft.Office.Tools.Ribbon.RibbonToggleButton;
-                if (btn != null)
-                {
-                    btn.Label   = nowListening ? "🎤 Listening…" : "🎤 Listen";
-                    btn.Checked = nowListening;
-                }
-
-                // If stopping the listener, also disable Auto Scripture Mode
-                if (!nowListening && AutoScriptureMode.Instance.IsEnabled)
-                {
-                    AutoScriptureMode.Instance.Disable();
-                    var autoBtn = TryGetButton("btnAutoScripture");
-                    if (autoBtn != null) { autoBtn.Label = "⚡ Auto Scripture"; autoBtn.Checked = false; }
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Windows.Forms.MessageBox.Show(
-                    $"Error toggling speech listener:\n\n{ex.Message}",
-                    "Error",
-                    System.Windows.Forms.MessageBoxButtons.OK,
-                    System.Windows.Forms.MessageBoxIcon.Error);
-            }
-        }
-
-        // ── Ribbon button: Auto Scripture Mode ───────────────────────────────
-        // Wire to a ToggleButton named "btnAutoScripture" in the ribbon designer.
+        // ── Auto Scripture Mode toggle ────────────────────────────────────────
+        // Wired to the existing btnToggleSpeech button in the ribbon designer.
+        // When Auto Scripture Mode is ON, speech is active and any detected
+        // reference is inserted immediately without any UI interaction.
+        // Shift key in presenter view also toggles this mode.
         //
-        // When ON: speech service listens continuously. Any scripture reference
-        // spoken aloud is inserted immediately — no button press needed.
-        // A toast notification confirms each insertion.
-        //
-        // When OFF: speech service still listens but does NOT auto-insert.
-        // Manual insertion via Ctrl (presenter view) still works.
-        //
-        // Shift key in presenter view also toggles this mode (keyboard shortcut).
+        // The existing btnToggleSpeech_Click in TestRibbonItem.cs handles basic
+        // listen on/off. This handler layers Auto Scripture Mode on top of it.
 
         private void btnAutoScripture_Click(object sender, Microsoft.Office.Tools.Ribbon.RibbonControlEventArgs e)
         {
@@ -376,12 +327,11 @@ namespace WorshipHelperVSTO
                     btn.Checked = nowOn;
                 }
 
-                // Keep the listen button in sync
-                var listenBtn = TryGetButton("btnSpeechListen");
-                if (listenBtn != null && nowOn && service?.IsListening == true)
+                // Keep the existing speech toggle button in sync
+                if (nowOn && service?.IsListening == true)
                 {
-                    listenBtn.Label   = "🎤 Listening…";
-                    listenBtn.Checked = true;
+                    btnToggleSpeech.Image = global::WorshipHelperVSTO.Properties.Resources.mic_active;
+                    btnToggleSpeech.Label = "Listening...";
                 }
             }
             catch (Exception ex)
@@ -392,20 +342,6 @@ namespace WorshipHelperVSTO
                     System.Windows.Forms.MessageBoxButtons.OK,
                     System.Windows.Forms.MessageBoxIcon.Error);
             }
-        }
-
-        // Helper to get a ribbon toggle button by ID without crashing if absent
-        private Microsoft.Office.Tools.Ribbon.RibbonToggleButton TryGetButton(string id)
-        {
-            try
-            {
-                foreach (var group in this.Groups)
-                    foreach (var item in group.Items)
-                        if (item is Microsoft.Office.Tools.Ribbon.RibbonToggleButton btn && btn.Name == id)
-                            return btn;
-            }
-            catch { }
-            return null;
         }
     }
 }
