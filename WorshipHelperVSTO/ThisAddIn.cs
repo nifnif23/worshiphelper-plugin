@@ -25,23 +25,48 @@ namespace WorshipHelperVSTO
             log = LogManager.GetLogger("WorshipHelperVSTO");
             log.Info("Initalised logger");
             SetWindowsHooks();
+
+            // ★ Speech service lifecycle — without this the listener never
+            // initialises, so the mic toggle does nothing.
+            InitialiseSpeechService();
         }
 
         private void ThisAddIn_Shutdown(object sender, EventArgs e)
         {
             UnhookWindowsHooks();
+
+            // ★ Pair with InitialiseSpeechService above.
+            ShutdownSpeechService();
         }
 
         private void SetWindowsHooks()
         {
-            uint threadId = (uint)SafeNativeMethods.GetCurrentThreadId();
+            // FIX: WH_KEYBOARD is thread-local — it only fires on the thread that
+            // installed it, which is the VSTO main thread. When PowerPoint's Presenter
+            // View is active, keystrokes are dispatched on a DIFFERENT thread (the
+            // presenter view window's message loop), so the old hook never fired.
+            //
+            // WH_KEYBOARD_LL (low-level keyboard hook) is system-wide and fires
+            // regardless of which window or thread has focus. It requires a valid
+            // module handle and threadId = 0 (global). The callback receives a
+            // KBDLLHOOKSTRUCT* via lParam instead of the old packed lParam value.
+            IntPtr hMod = SafeNativeMethods.GetModuleHandle(
+                System.IO.Path.GetFileName(
+                    System.Reflection.Assembly.GetExecutingAssembly().Location));
 
             _hookIdKeyboard =
                 SafeNativeMethods.SetWindowsHookEx(
-                    (int)SafeNativeMethods.HookType.WH_KEYBOARD,
+                    (int)SafeNativeMethods.HookType.WH_KEYBOARD_LL,
                     _keyboardProc,
-                    IntPtr.Zero,
-                    threadId);
+                    hMod,
+                    0); // 0 = global (all threads)
+
+            if (_hookIdKeyboard == IntPtr.Zero)
+            {
+                int err = Marshal.GetLastWin32Error();
+                log.Warn($"SetWindowsHookEx (WH_KEYBOARD_LL) failed with error {err}. " +
+                         "Ctrl shortcut may not work in Presenter View.");
+            }
         }
 
         private void UnhookWindowsHooks()
@@ -55,12 +80,20 @@ namespace WorshipHelperVSTO
             {
                 if (nCode >= 0)
                 {
-                    // Various attempts to decode this value as a proper struct were unsuccessful, with memory violation errors...
-                    bool keyUp = (lParam.ToInt64() & 0xC0000000) != 0 && nCode == 0;
-                    if (!keyUp)
+                    // WH_KEYBOARD_LL: wParam is the message type (WM_KEYDOWN/WM_KEYUP/etc.)
+                    // lParam is a pointer to a KBDLLHOOKSTRUCT.
+                    uint msg = (uint)wParam.ToInt64();
+                    bool isKeyUp = (msg == (uint)SafeNativeMethods.WindowMessages.WM_KEYUP ||
+                                   msg == (uint)SafeNativeMethods.WindowMessages.WM_SYSKEYUP);
+
+                    if (!isKeyUp)
                     {
                         return SafeNativeMethods.CallNextHookEx(_hookIdKeyboard, nCode, wParam, lParam);
                     }
+
+                    // Read the virtual key code from the KBDLLHOOKSTRUCT
+                    var hookStruct = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(KBDLLHOOKSTRUCT));
+                    int vkCode = hookStruct.vkCode;
 
                     bool formOpen = System.Windows.Forms.Application.OpenForms.Count > 0;
                     if (formOpen)
@@ -70,31 +103,86 @@ namespace WorshipHelperVSTO
                     }
 
                     DocumentWindow presenterView = new WindowManager().GetPresenterView();
-                    bool presenting = presenterView != null && presenterView.Active == Microsoft.Office.Core.MsoTriState.msoTrue;
+                    bool presenting = presenterView != null &&
+                                      presenterView.Active == Microsoft.Office.Core.MsoTriState.msoTrue;
 
                     if (presenting)
                     {
-                        char keyPressed = (char) wParam.ToInt64();
-                        log.Debug($"Key pressed while presenting: {wParam} ({keyPressed})");
-                        if (keyPressed == 17) // Ctrl key - our only choices are Ctrl, Shift and Caps Lock if we don't want to unblank a blanked slide as a side effect
+                        log.Debug($"Key pressed while presenting: vkCode={vkCode}");
+
+                        // VK_CONTROL = 0x11. Left (0xA2) and right (0xA3) also checked.
+                        bool isCtrl = vkCode == 0x11 || vkCode == 0xA2 || vkCode == 0xA3;
+
+                        // VK_SHIFT = 0x10. Left (0xA0) and right (0xA1) also checked.
+                        // Shift toggles Auto Scripture Mode — say a reference and it inserts.
+                        bool isShift = vkCode == 0x10 || vkCode == 0xA0 || vkCode == 0xA1;
+
+                        if (isCtrl)
                         {
-                            // BUG FIX: Create a new form instance each time instead of reusing
-                            // a singleton. Previously, calling Close() disposed the form, so
-                            // showing it again would throw ObjectDisposedException.
                             log.Debug("Opening Add Content Live form");
-                            using (var addContentLiveForm = new AddContentLiveForm())
+                            var mainForm = System.Windows.Forms.Application.OpenForms.Count > 0
+                                ? System.Windows.Forms.Application.OpenForms[0]
+                                : null;
+
+                            if (mainForm != null && mainForm.InvokeRequired)
                             {
-                                addContentLiveForm.ShowDialog();
+                                mainForm.BeginInvoke((Action)ShowAddContentLiveForm);
                             }
+                            else
+                            {
+                                ShowAddContentLiveForm();
+                            }
+                        }
+                        else if (isShift)
+                        {
+                            // Toggle Auto Scripture Mode
+                            var mainForm = System.Windows.Forms.Application.OpenForms.Count > 0
+                                ? System.Windows.Forms.Application.OpenForms[0]
+                                : null;
+
+                            Action toggleAction = () =>
+                            {
+                                try
+                                {
+                                    bool nowOn = AutoScriptureMode.Instance.Toggle(
+                                        Globals.ThisAddIn.SpeechService);
+                                    log.Info($"Auto Scripture Mode toggled via Shift key: {(nowOn ? "ON" : "OFF")}");
+                                }
+                                catch (Exception ex)
+                                {
+                                    log.Error("Failed to toggle Auto Scripture Mode.", ex);
+                                }
+                            };
+
+                            if (mainForm != null && mainForm.InvokeRequired)
+                                mainForm.BeginInvoke(toggleAction);
+                            else
+                                toggleAction();
                         }
                     }
                 }
-            } catch (Exception e)
+            }
+            catch (Exception e)
             {
                 log.Error("Unexpected error while handling keypress", e);
             }
 
             return SafeNativeMethods.CallNextHookEx(_hookIdKeyboard, nCode, wParam, lParam);
+        }
+
+        private void ShowAddContentLiveForm()
+        {
+            try
+            {
+                using (var addContentLiveForm = new AddContentLiveForm())
+                {
+                    addContentLiveForm.ShowDialog();
+                }
+            }
+            catch (Exception ex)
+            {
+                log.Error("Error showing AddContentLiveForm", ex);
+            }
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -104,56 +192,55 @@ namespace WorshipHelperVSTO
             public int scanCode;
             public int flags;
             public int time;
-            public int dwExtraInfo;
+            public IntPtr dwExtraInfo;
         }
 
         public static int FLAG_RELEASED = 0x80;
 
         internal static class SafeNativeMethods
-    {
-        public delegate IntPtr HookProc(int nCode, IntPtr wParam, IntPtr lParam);
-
-            
-
-        public enum HookType
         {
-            WH_KEYBOARD = 2
+            public delegate IntPtr HookProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+            public enum HookType
+            {
+                WH_KEYBOARD    = 2,
+                WH_KEYBOARD_LL = 13,  // Low-level: system-wide, fires on all threads/windows
+            }
+
+            public enum WindowMessages : uint
+            {
+                WM_KEYDOWN    = 0x0100,
+                WM_KEYFIRST   = 0x0100,
+                WM_KEYLAST    = 0x0108,
+                WM_KEYUP      = 0x0101,
+                WM_SYSDEADCHAR = 0x0107,
+                WM_SYSKEYDOWN = 0x0104,
+                WM_SYSKEYUP   = 0x0105
+            }
+
+            [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+            public static extern IntPtr GetModuleHandle(string lpModuleName);
+
+            [DllImport("user32.dll", SetLastError = true)]
+            public static extern bool UnhookWindowsHookEx(IntPtr hhk);
+
+            [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+            public static extern IntPtr SetWindowsHookEx(
+                int idHook,
+                HookProc lpfn,
+                IntPtr hMod,
+                uint dwThreadId);
+
+            [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+            public static extern IntPtr CallNextHookEx(
+                IntPtr hhk,
+                int nCode,
+                IntPtr wParam,
+                IntPtr lParam);
+
+            [DllImport("kernel32", CharSet = CharSet.Auto, SetLastError = true)]
+            public static extern int GetCurrentThreadId();
         }
-
-        public enum WindowMessages : uint
-        {
-            WM_KEYDOWN = 0x0100,
-            WM_KEYFIRST = 0x0100,
-            WM_KEYLAST = 0x0108,
-            WM_KEYUP = 0x0101,
-            WM_SYSDEADCHAR = 0x0107,
-            WM_SYSKEYDOWN = 0x0104,
-            WM_SYSKEYUP = 0x0105
-        }
-
-        [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-        public static extern IntPtr GetModuleHandle(string lpModuleName);
-
-        [DllImport("user32.dll", SetLastError = true)]
-        public static extern bool UnhookWindowsHookEx(IntPtr hhk);
-
-        [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-        public static extern IntPtr SetWindowsHookEx(
-            int idHook,
-            HookProc lpfn,
-            IntPtr hMod,
-            uint dwThreadId);
-
-        [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-        public static extern IntPtr CallNextHookEx(
-            IntPtr hhk,
-            int nCode,
-            IntPtr wParam,
-            IntPtr lParam);
-
-        [DllImport("kernel32", CharSet = CharSet.Auto, SetLastError = true)]
-        public static extern int GetCurrentThreadId();
-    }
 
     // Called from ribbon constructor
     public static void PreInitialize()

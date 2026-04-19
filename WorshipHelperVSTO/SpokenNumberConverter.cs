@@ -64,7 +64,10 @@ namespace WorshipHelperVSTO
         /// </summary>
         private static readonly HashSet<string> Fillers = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "and", "a"
+            "and", "a",
+            // spoken punctuation — already replaced before reaching WordsToNumber,
+            // but listed here as a safety net in case they appear in isolation
+            "colon", "dash", "hyphen",
         };
 
         // -----------------------------------------------------------------------
@@ -161,22 +164,15 @@ namespace WorshipHelperVSTO
 
             // Remove filler words that indicate structure but don't carry number value
             // We keep "and" and "to" as they serve as delimiters
-
-            // Strip pure noise words Vosk commonly hallucinates between numbers
-            // e.g. "one of us one" (heard for "one verse one") → strip "us"
-            normalised = Regex.Replace(normalised, @"\b(us|the|a|an|oh)\b", " ", RegexOptions.IgnoreCase);
-
             normalised = Regex.Replace(normalised, @"\b(chapter|chapters)\b", " ", RegexOptions.IgnoreCase);
-
-            // Treat "of" as a verse separator when it appears between two number groups
-            // e.g. "genesis one of one" (Vosk mishearing "verse" as "of") → VERSESEP
-            // We convert it here so the existing VERSESEP logic handles it automatically.
-            // Caveat: only treat "of" as VERSESEP when not part of "Song of Solomon" —
-            // but by this point the book name has already been stripped, so it's safe.
-            normalised = Regex.Replace(normalised, @"\b(verse|verses|of)\b", "VERSESEP", RegexOptions.IgnoreCase);
-
+            normalised = Regex.Replace(normalised, @"\b(verse|verses)\b", "VERSESEP", RegexOptions.IgnoreCase);
             normalised = Regex.Replace(normalised, @"\b(from)\b", " ", RegexOptions.IgnoreCase);
             normalised = Regex.Replace(normalised, @"\b(through)\b", "to", RegexOptions.IgnoreCase);
+
+            // Spoken punctuation from the Vosk grammar vocabulary:
+            //   "zechariah nine colon eight dash ten" → chapter 9, verse 8–10
+            normalised = Regex.Replace(normalised, @"\bcolon\b", "VERSESEP", RegexOptions.IgnoreCase);
+            normalised = Regex.Replace(normalised, @"\b(dash|hyphen)\b", "to", RegexOptions.IgnoreCase);
 
             // Collapse whitespace
             normalised = Regex.Replace(normalised, @"\s+", " ").Trim();
@@ -316,7 +312,6 @@ namespace WorshipHelperVSTO
         {
             int total = 0;
             bool foundAny = false;
-            bool prevWasHundred = false;
 
             for (int i = 0; i < tokens.Count; i++)
             {
@@ -341,15 +336,12 @@ namespace WorshipHelperVSTO
 
                 if (val == 100)
                 {
-                    // "one hundred" or just "hundred"
                     if (total == 0) total = 1;
                     total *= 100;
-                    prevWasHundred = true;
                 }
                 else
                 {
                     total += val;
-                    prevWasHundred = false;
                 }
 
                 foundAny = true;
@@ -360,13 +352,25 @@ namespace WorshipHelperVSTO
 
         /// <summary>
         /// Heuristic split of spoken number tokens into chapter and verse parts.
-        /// 
-        /// Strategy:
-        /// 1. Try each possible split point (left = chapter, right = verse).
-        /// 2. Both sides must parse as valid numbers.
-        /// 3. Prefer the split where chapter is smallest sensible value (i.e., leftmost split).
-        ///    In Bible references, chapters are typically 1-150 and verses 1-176.
-        /// 4. If no valid split produces two numbers, treat the whole thing as chapter-only.
+        ///
+        /// Key behaviours:
+        ///
+        /// 1. DIGIT-BY-DIGIT HIGH CHAPTERS (Nigerian/African accent pattern):
+        ///    "one one nine" → 119 (Psalms), NOT 11:9.
+        ///    When three or more single-digit tokens appear in a row with no
+        ///    tens/hundreds words, they are read digit-by-digit as a chapter
+        ///    number, not split as chapter:verse. This matches how speakers
+        ///    with Nigerian accents pronounce Psalm 119, 138, etc.
+        ///    e.g. "one three eight" → 138, "one one nine" → 119.
+        ///    The validator downstream will handle whether a verse follows.
+        ///
+        /// 2. EXPLICIT VERSE SEPARATOR takes priority:
+        ///    "verse", "colon" already converted to VERSESEP upstream — those
+        ///    arrive in SpokenToReferenceFragment before this method is called.
+        ///
+        /// 3. STANDARD SPLIT: for everything else, try each split point
+        ///    left-to-right, picking the first that yields two valid numbers.
+        ///    Prefer smaller chapter (leftmost split).
         /// </summary>
         private static (string chapter, string verse) SplitChapterVerse(string spokenFragment)
         {
@@ -380,11 +384,42 @@ namespace WorshipHelperVSTO
                 return val.HasValue ? (val.Value.ToString(), (string)null) : ((string)null, (string)null);
             }
 
-            // Try each split point from left to right.
-            // Prefer the first valid split (smallest chapter number).
-            // NOTE: we do NOT blindly skip splits where the right side starts with a filler
-            // like "and" — "twenty and six" needs split before "and", and WordsToNumber
-            // handles interior "and" correctly ("one hundred and three" -> 103).
+            // ---------------------------------------------------------------
+            // Digit-by-digit detection: 3+ consecutive single-digit words
+            // (none of which are tens/hundreds) → read as a single number.
+            //
+            // "one one nine"   → 119 (Psalm 119), not 11:9
+            // "one three eight" → 138 (Psalm 138), not 13:8
+            // "one two"         → only 2 tokens, fall through to normal split
+            //                     so "John one two" → John 1:2 correctly.
+            //
+            // Threshold: 3 or more consecutive single-digit tokens required.
+            // With only 2 tokens we can't tell "one nine" from "1:9" reliably,
+            // so we leave those to the normal split path.
+            // ---------------------------------------------------------------
+            bool AllSingleDigits(List<string> toks) =>
+                toks.All(t =>
+                    (Cardinals.TryGetValue(t, out int v) && v >= 1 && v <= 9) ||
+                    (int.TryParse(t, out int d) && d >= 1 && d <= 9));
+
+            if (tokens.Count >= 3 && AllSingleDigits(tokens))
+            {
+                // Build the number by concatenating digits
+                int chapter = 0;
+                foreach (var tok in tokens)
+                {
+                    int d = Cardinals.TryGetValue(tok, out int cv) ? cv
+                            : int.TryParse(tok, out int dv) ? dv : -1;
+                    if (d < 0) { chapter = 0; break; }
+                    chapter = chapter * 10 + d;
+                }
+                if (chapter > 0)
+                    return (chapter.ToString(), null);
+            }
+
+            // ---------------------------------------------------------------
+            // Standard split: try each boundary left-to-right.
+            // ---------------------------------------------------------------
             for (int splitAt = 1; splitAt < tokens.Count; splitAt++)
             {
                 string leftPhrase = string.Join(" ", tokens.Take(splitAt));
@@ -395,23 +430,32 @@ namespace WorshipHelperVSTO
                 // "hundred" alone on the right makes no sense for a verse
                 if (firstRight == "hundred") continue;
 
-                // If the right side is nothing but fillers, absorb into left — don't split here
+                // Right side nothing but fillers → absorb into left
                 bool rightIsOnlyFiller = Fillers.Contains(firstRight) &&
                                          tokens.Skip(splitAt).All(t => Fillers.Contains(t));
                 if (rightIsOnlyFiller) continue;
 
-                int? leftNum = WordsToNumber(leftPhrase);
+                int? leftNum  = WordsToNumber(leftPhrase);
                 int? rightNum = WordsToNumber(rightPhrase);
 
-                if (leftNum.HasValue && rightNum.HasValue && leftNum.Value > 0 && rightNum.Value > 0)
+                if (leftNum.HasValue && rightNum.HasValue &&
+                    leftNum.Value > 0 && rightNum.Value > 0)
                 {
+                    // Extra guard: if left produces a number > 150 it's almost
+                    // certainly wrong as a chapter (only Psalms goes that high,
+                    // and that case is caught by digit-by-digit above).
+                    // Try continuing to find a better split.
+                    if (leftNum.Value > 150) continue;
+
                     return (leftNum.Value.ToString(), rightNum.Value.ToString());
                 }
             }
 
-            // No valid split found — treat the whole thing as chapter-only
+            // No valid split → treat the whole thing as chapter-only
             int? wholeNum = WordsToNumber(spokenFragment);
-            return wholeNum.HasValue ? (wholeNum.Value.ToString(), (string)null) : ((string)null, (string)null);
+            return wholeNum.HasValue
+                ? (wholeNum.Value.ToString(), (string)null)
+                : ((string)null, (string)null);
         }
     }
 }

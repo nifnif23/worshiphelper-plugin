@@ -3,6 +3,7 @@ using Microsoft.Office.Interop.PowerPoint;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+
 using static Microsoft.Office.Core.MsoTriState;
 
 namespace WorshipHelperVSTO
@@ -82,7 +83,7 @@ namespace WorshipHelperVSTO
                                                   List<Verse> verseList, string bookName,
                                                   int chapterNum, string translation)
         {
-            Application app = Globals.ThisAddIn.Application;
+            var app = Globals.ThisAddIn.Application;
 
             Presentation templatePresentation = app.Presentations.Open(template.path, msoTrue, msoFalse, msoFalse);
             var templateSlide = templatePresentation.Slides[1];
@@ -158,7 +159,7 @@ namespace WorshipHelperVSTO
                                             List<Verse> verseList, string referenceLabel,
                                             string translation)
         {
-            Application app = Globals.ThisAddIn.Application;
+            var app = Globals.ThisAddIn.Application;
 
             Presentation templatePresentation = app.Presentations.Open(template.path, msoTrue, msoFalse, msoFalse);
             var templateSlide = templatePresentation.Slides[1];
@@ -388,14 +389,20 @@ namespace WorshipHelperVSTO
 
         private Slide newSlideFromTemplate(Presentation templatePresentation, int insertAt)
         {
-            Application app = Globals.ThisAddIn.Application;
-            templatePresentation.Slides[1].Copy();
-            return app.ActivePresentation.Slides.Paste(insertAt)[1];
+            var app = Globals.ThisAddIn.Application;
+
+            // InsertFromFile reads the template directly from disk — no clipboard
+            // involvement at all, so the user's copied content is never wiped.
+            // InsertFromFile(path, afterIndex, startSlide, endSlide) where afterIndex
+            // is 0-based: afterIndex = insertAt - 1 places the new slide at insertAt.
+            string templatePath = templatePresentation.FullName;
+            app.ActivePresentation.Slides.InsertFromFile(templatePath, insertAt - 1, 1, 1);
+            return app.ActivePresentation.Slides[insertAt];
         }
 
         public static DocumentWindow getMainWindow()
         {
-            Application app = Globals.ThisAddIn.Application;
+            var app = Globals.ThisAddIn.Application;
             foreach (DocumentWindow win in app.ActivePresentation.Windows)
             {
                 if (!win.Caption.Contains("Presenter View"))

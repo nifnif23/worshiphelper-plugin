@@ -1,21 +1,32 @@
 # WorshipHelper — Speech Recognition Setup
 
-The speech recognition has been upgraded from Windows' built-in System.Speech
-to **Vosk** — a free, fully offline engine with significantly better accuracy,
-especially for unusual words (Habakkuk, Thessalonians, Zechariah, etc.) and
-non-US accents.
+The speech recognition runs on **Vosk** — a free, fully offline engine.
+No cloud, no cost, and it works without an internet connection.
+
+---
+
+## Model recommendation
+
+**Use the small model (`vosk-model-small-en-us-0.15`, ~50 MB).**
+
+The small model is fast to load, small enough to ship inside the MSI, and
+combined with the two-phase grammar (SCAN → FOCUS-per-book) and the
+PhoneticCorrector rationaliser it handles typical Bible references very
+well. The large model (`vosk-model-en-us-0.22`, ~1.8 GB) gives slightly
+better accuracy on unusual words but is rarely worth the extra size.
 
 ---
 
 ## If you build via GitHub Actions (normal)
 
-**Nothing extra to do.** The workflow automatically downloads the Vosk model
-during the build and bundles it inside the MSI. Just run the workflow and
-install the resulting MSI as usual.
+The `main.yml` workflow already points to the small model:
 
-The bundled model is `vosk-model-small-en-us-0.15` (~50 MB). It's fast and
-good enough for structured phrases like Bible references. If you want the
-larger, more accurate model, see "Upgrading the model" below.
+```yaml
+VOSK_MODEL_URL: https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
+VOSK_MODEL_CACHE_KEY: vosk-model-small-en-us-0.15
+```
+
+Run the workflow as normal.
 
 ---
 
@@ -23,12 +34,12 @@ larger, more accurate model, see "Upgrading the model" below.
 
 You need to download the model once and put it in the right place before building.
 
-**1. Download a model** from https://alphacephei.com/vosk/models
+**1. Download the small model** from https://alphacephei.com/vosk/models:
 
 | Model | Size | Notes |
 |---|---|---|
-| `vosk-model-small-en-us-0.15` | ~50 MB | Start here |
-| `vosk-model-en-us-0.22` | ~1.8 GB | Best accuracy for Sunday use |
+| `vosk-model-small-en-us-0.15` | ~50 MB | **Recommended — bundled by the workflow** |
+| `vosk-model-en-us-0.22` | ~1.8 GB | Optional — better accuracy, much bigger MSI |
 
 **2. Extract it** to:
 ```
@@ -53,22 +64,6 @@ Install-Package NAudio -Version 2.2.1
 
 ---
 
-## Upgrading to the large model
-
-The large model (`vosk-model-en-us-0.22`, ~1.8 GB) is noticeably more accurate
-but makes the MSI much larger and slows the build by several minutes.
-
-To switch, edit `.github/workflows/main.yml` and change the two lines:
-```yaml
-$modelUrl  = "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip"
-```
-to:
-```yaml
-$modelUrl  = "https://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip"
-```
-
----
-
 ## Troubleshooting
 
 **"Vosk model not found" on startup**
@@ -79,32 +74,33 @@ Check the WorshipHelper log for the exact path it tried.
 **No recognition / nothing happens**
 - Check Windows Sound settings — correct mic set as default input?
 - Speak clearly and include book + chapter + verse: *"John three sixteen"*
-- Check the debug panel to see what Vosk is actually hearing
+- Open the Speech Monitor (Monitor button in the ribbon) to see:
+  * The live mic-level bar (green activity = the mic is picking up audio)
+  * The last heard utterance and its confidence
+  * The current recognition phase (SCAN or FOCUS: <book>)
 
 **Recognition works but references aren't detected**
 Vosk heard something but the Bible reference detector filtered it out.
-Use the debug panel to see the raw recognised text. Common causes:
+Use the Speech Monitor to see the raw recognised text. Common causes:
 - Book name too mangled (try speaking more slowly/clearly)
 - No chapter/verse after the book name
 - Combined confidence below threshold (check the log)
 
 ---
 
-## What changed in this update
+## What's in this build
 
-**`SpeechListener.cs`** — rewritten to use Vosk + NAudio instead of System.Speech.
-Same public API, same events throughout the rest of the project.
+**Small model + rationaliser pipeline**
+- Phase 1 (SCAN): broad grammar of book names + numbers + a few structure
+  words (`verse`, `chapter`, `to`, etc.) + common mishearings.
+- Phase 2 (FOCUS): once a book name fires, the grammar collapses to just
+  that book's variants + numbers — so chapter/verse come out cleanly.
+- PhoneticCorrector rewrites known Vosk mishearings before detection
+  (e.g. `tea` → `three`, `heaven` → `seven`, `of us` → `verse`).
 
-**`BibleReferenceDetector.cs`** — three fixes:
-- Removed `"of"` from the preamble skip list (was breaking "Song of Solomon")
-- Fuzzy matching with edit distance scaled by word length, so long obscure
-  names like Habakkuk, Zechariah, Thessalonians get enough slack to match
-  even when the engine mishears them
-- Small confidence penalty for fuzzy matches (still accepted, but ranked lower
-  than exact matches if both fire)
-
-**`SpokenNumberConverter.cs`** — fixed a bug where "twenty and six" would fail
-to split into chapter 20, verse 6
-
-**`.github/workflows/main.yml`** — added a step to download and bundle the
-Vosk model automatically during the build
+**Speech Monitor (diagnostic panel)**
+- Live mic-level bar — confirms the add-in is actually receiving audio.
+- Per-result confidence bar — red / yellow / green at 50 % / 75 %.
+- Phase badge in the top-right — `SCAN` or `FOCUS: <book>`.
+- Copy button — copies the last detected reference to the clipboard.
+- Log auto-trims at 500 lines so it never grows without bound.

@@ -5,8 +5,9 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  VOSK_MODEL_URL: https://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip
-  VOSK_MODEL_CACHE_KEY: vosk-model-en-us-0.22
+  # Using the SMALL model (~50 MB) for fast load and small MSI.
+  VOSK_MODEL_URL: https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
+  VOSK_MODEL_CACHE_KEY: vosk-model-small-en-us-0.15
 
 jobs:
   build:

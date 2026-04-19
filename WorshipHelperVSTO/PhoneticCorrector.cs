@@ -311,6 +311,22 @@ namespace WorshipHelperVSTO
             // "verse us" → "verse" (versus → verse misfire)
             ( "verse us",           "verse"      ),
 
+            // ── "verse" heard as "of us" / "of as" ────────────────────────
+            // Classic Vosk misfire on the /vɜːs/ phoneme when the grammar
+            // already contains "of" and "us" as other tokens. "Genesis 1
+            // verse 1" comes out as "genesis one of us one". Always safe
+            // to rewrite — "of us" has no legitimate meaning in a Bible
+            // reference context.
+            ( "of us",              "verse"      ),
+            ( "of as",              "verse"      ),
+            ( "of is",              "verse"      ),
+            ( "of a",               "verse"      ),
+            ( "office",             "verse"      ),  // "of us" often collapses to "office"
+
+            // "verses" heard as "of asses" / "offices" — rare but observed
+            ( "of asses",           "verses"     ),
+            ( "offices",            "verses"     ),
+
             // "book of" before a book name — not needed but reduces token count
             // Left to preamble stripping in BibleReferenceDetector.
         };

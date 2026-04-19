@@ -94,7 +94,14 @@ namespace WorshipHelperVSTO
         private static readonly ILog log = LogManager.GetLogger(typeof(SpeechToScriptureService));
 
         private readonly SpeechListener _listener;
+
+        /// <summary>
+        /// Public access to the underlying speech listener so the UI can
+        /// subscribe to low-level events like <see cref="SpeechListener.PhaseChanged"/>.
+        /// </summary>
+        public SpeechListener Listener => _listener;
         private bool _disposed;
+        private Bible _validationBible; // cached for reference validation
 
         // Duplicate suppression
         private readonly Dictionary<string, DateTime> _recentReferences = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
@@ -280,6 +287,51 @@ namespace WorshipHelperVSTO
                 log.Info($"Pipeline: Detected \"{detected.NormalisedReference}\" " +
                          $"(det_conf={detected.Confidence:F2}, speech_conf={e.Confidence:F2})");
 
+                // Step 1b: Validate and repair against real Bible data.
+                // Catches impossible references and applies heuristics:
+                //   "Zech 5:49"  → "Zech 5:4-9"   (verse as range)
+                //   "Zech 49"    → "Zech 4:9"      (collapsed chapter:verse)
+                //   "Zech 40:1"  → "Zech 14:1"     (forty/fourteen swap)
+                //   "Ps 1:19"    → stays "Ps 1:19" (verse 19 exists in Ps 1)
+                //   "Ps 119:1"   → stays "Ps 119:1" (Ps 119 is a real chapter)
+                Bible validationBible = null;
+                try
+                {
+                    // Load the default bible for validation.
+                    // We use ESV as the validation source — it has all books/chapters/verses.
+                    // This is a fast cached operation after first load.
+                    validationBible = _validationBible ?? (_validationBible = TryLoadValidationBible());
+                }
+                catch { /* non-fatal — skip validation if bible unavailable */ }
+
+                if (validationBible != null)
+                {
+                    var validated = ReferenceValidator.Validate(
+                        validationBible, detected.BookName, detected.ReferenceFragment);
+
+                    if (validated == null)
+                    {
+                        log.Warn($"Pipeline: \"{detected.NormalisedReference}\" failed validation and could not be repaired. Dropping.");
+                        return;
+                    }
+
+                    if (validated.Outcome != ValidationOutcome.Valid)
+                    {
+                        log.Info($"Pipeline: Repaired \"{detected.NormalisedReference}\" → " +
+                                 $"\"{validated.NormalisedReference}\" ({validated.Outcome})");
+
+                        // Rebuild detected reference from the repaired values
+                        detected = new DetectedReference
+                        {
+                            NormalisedReference = validated.NormalisedReference,
+                            BookName            = validated.BookName,
+                            ReferenceFragment   = validated.ReferenceFragment,
+                            MatchedRawText      = detected.MatchedRawText,
+                            Confidence          = detected.Confidence,
+                        };
+                    }
+                }
+
                 // Step 2: Compute combined confidence
                 double combined = (e.Confidence * 0.4) + (detected.Confidence * 0.6);
                 if (combined < MinCombinedConfidence)
@@ -354,6 +406,23 @@ namespace WorshipHelperVSTO
                 IsError = isError,
                 IsListening = isListening,
             });
+        }
+
+        /// <summary>
+        /// Loads the ESV bible for reference validation. Cached after first load.
+        /// Returns null if the bible file is unavailable (e.g. first run before install).
+        /// </summary>
+        private static Bible TryLoadValidationBible()
+        {
+            try
+            {
+                return OpenSongBibleReader.LoadTranslation("ESV");
+            }
+            catch
+            {
+                try { return OpenSongBibleReader.LoadTranslation("NASB"); }
+                catch { return null; }
+            }
         }
 
         // -----------------------------------------------------------------------
