@@ -1,0 +1,181 @@
+name: Build WorshipHelper MSI (No Model Download)
+
+on:
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Set WiX environment variable
+        run: |
+          $wixPath = (Get-ChildItem "C:\Program Files (x86)" -Filter "WiX Toolset*" | Select-Object -First 1).FullName
+          echo "WIX=$wixPath" >> $env:GITHUB_ENV
+
+      - name: Restore NuGet packages
+        run: nuget restore WorshipHelper.sln
+
+      - name: Resolve assembly HintPaths
+        run: |
+          $packagesDir = "$env:GITHUB_WORKSPACE\packages"
+
+          $naudioCore = Get-ChildItem "$packagesDir\NAudio.Core.*\lib" -Recurse -Filter "NAudio.Core.dll" |
+            Sort-Object { $_.FullName } | Select-Object -Last 1
+          $naudioWinMM = Get-ChildItem "$packagesDir\NAudio.WinMM.*\lib" -Recurse -Filter "NAudio.WinMM.dll" |
+            Sort-Object { $_.FullName } | Select-Object -Last 1
+          $vosk = Get-ChildItem "$packagesDir\Vosk.*\lib" -Recurse -Filter "Vosk.dll" |
+            Sort-Object { $_.FullName } | Select-Object -Last 1
+
+          if (-not $naudioCore) { throw "NAudio.Core.dll not found" }
+          if (-not $naudioWinMM) { throw "NAudio.WinMM.dll not found" }
+          if (-not $vosk)        { throw "Vosk.dll not found" }
+
+          echo "NAUDIO_CORE_PATH=$($naudioCore.FullName)"   >> $env:GITHUB_ENV
+          echo "NAUDIO_WINMM_PATH=$($naudioWinMM.FullName)" >> $env:GITHUB_ENV
+          echo "VOSK_PATH=$($vosk.FullName)"                >> $env:GITHUB_ENV
+
+      - name: Verify Vosk model present
+        run: |
+          $modelDest = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\data\vosk-model"
+          if (-not (Test-Path $modelDest)) {
+            throw "Vosk model not found at $modelDest. Make sure it is committed to the repo or use the cached workflow."
+          }
+          Write-Host "Vosk model OK: $((Get-ChildItem $modelDest -Recurse -File).Count) files"
+
+      - name: Generate self-signed certificate
+        run: |
+          $cert = New-SelfSignedCertificate `
+            -Subject "CN=WorshipHelper" `
+            -CertStoreLocation "Cert:\CurrentUser\My" `
+            -KeyExportPolicy Exportable `
+            -KeySpec Signature `
+            -KeyUsage DigitalSignature `
+            -Type CodeSigningCert `
+            -NotAfter (Get-Date).AddYears(5)
+          $pwd = ConvertTo-SecureString -String "build123" -Force -AsPlainText
+          $pfxPath = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\ci-cert.pfx"
+          Export-PfxCertificate -Cert $cert -FilePath $pfxPath -Password $pwd | Out-Null
+
+          $store = New-Object System.Security.Cryptography.X509Certificates.X509Store("My", "LocalMachine")
+          $store.Open("ReadWrite")
+          $store.Add($cert)
+          $store.Close()
+
+          echo "CERT_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+          echo "PFX_PATH=$pfxPath"                   >> $env:GITHUB_ENV
+
+      - name: Stamp build version
+        run: |
+          $versionLine = "[assembly: AssemblyFileVersion(`"1.4.0.$env:GITHUB_RUN_NUMBER`")]"
+          $path = "WorshipHelperVSTO\Properties\AssemblyInfo.cs"
+          $content = Get-Content $path -Raw
+          $content = $content -replace '(?m)^.*AssemblyFileVersion.*\r?\n', ''
+          $content = $content.TrimEnd() + "`r`n$versionLine`r`n"
+          Set-Content $path $content -NoNewline
+
+      - name: Build VSTO (Release)
+        run: |
+          msbuild WorshipHelperVSTO\WorshipHelperVSTO.csproj `
+            /p:Configuration=Release `
+            /p:Platform=AnyCPU `
+            /p:SignManifests=true `
+            /p:GenerateClickOnceManifests=false `
+            /p:ManifestCertificateThumbprint="$env:CERT_THUMBPRINT" `
+            /p:ManifestKeyFile="$env:PFX_PATH" `
+            /p:ManifestCertificatePassword=build123 `
+            /p:NAudioCoreHintPath="$env:NAUDIO_CORE_PATH" `
+            /p:NAudioWinMMHintPath="$env:NAUDIO_WINMM_PATH" `
+            /p:VoskHintPath="$env:VOSK_PATH" `
+            /verbosity:minimal
+
+      - name: Copy NuGet DLLs to bin\Release
+        run: |
+          $targetDir   = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\bin\Release"
+          $packagesDir = "$env:GITHUB_WORKSPACE\packages"
+
+          Copy-Item $env:VOSK_PATH         $targetDir -Force
+          Copy-Item $env:NAUDIO_CORE_PATH  $targetDir -Force
+          Copy-Item $env:NAUDIO_WINMM_PATH $targetDir -Force
+
+          $voskDir = Split-Path $env:VOSK_PATH -Parent
+          if (-not (Test-Path (Join-Path $voskDir "libvosk.dll"))) {
+            $found = Get-ChildItem "$packagesDir\Vosk.*" -Recurse -Filter "libvosk.dll" | Select-Object -First 1
+            if (-not $found) { throw "libvosk.dll not found" }
+            $voskDir = $found.DirectoryName
+          }
+          Get-ChildItem $voskDir -Filter "*.dll" | ForEach-Object {
+            Copy-Item $_.FullName $targetDir -Force
+          }
+
+      - name: Publish VSTO (With Signing)
+        run: |
+          msbuild WorshipHelperVSTO\WorshipHelperVSTO.csproj `
+            /target:Publish `
+            /p:Configuration=Release `
+            /p:Platform=AnyCPU `
+            /p:PublishDir="${{ github.workspace }}\WorshipHelperVSTO\publish\" `
+            /p:SignManifests=true `
+            /p:ManifestCertificateThumbprint="$env:CERT_THUMBPRINT" `
+            /p:ManifestKeyFile="$env:PFX_PATH" `
+            /p:ManifestCertificatePassword=build123 `
+            /p:NAudioCoreHintPath="$env:NAUDIO_CORE_PATH" `
+            /p:NAudioWinMMHintPath="$env:NAUDIO_WINMM_PATH" `
+            /p:VoskHintPath="$env:VOSK_PATH" `
+            /verbosity:normal
+
+      - name: Remove VSTO project reference from WiX project
+        run: |
+          $wixproj = "WorshipHelperSetup\WorshipHelperSetup.wixproj"
+          [xml]$xml = Get-Content $wixproj
+          $ns = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
+          $ns.AddNamespace("ms", "http://schemas.microsoft.com/developer/msbuild/2003")
+          $refs = $xml.SelectNodes("//ms:ProjectReference", $ns)
+          foreach ($ref in $refs) { $ref.ParentNode.RemoveChild($ref) | Out-Null }
+          $xml.Save((Resolve-Path $wixproj))
+
+      - name: Harvest Vosk model into WiX fragment
+        run: |
+          $heatExe  = Get-ChildItem "$env:WIX\bin" -Filter "heat.exe" | Select-Object -First 1 -ExpandProperty FullName
+          $modelDir = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\bin\Release\data\vosk-model"
+          $outFile  = "$env:GITHUB_WORKSPACE\WorshipHelperSetup\VoskModel.wxs"
+
+          & $heatExe dir $modelDir -nologo -sfrag -srd -sreg -gg -cg VoskModelFiles -dr VOSK_MODEL_DIR -out $outFile
+
+          $raw = Get-Content $outFile -Raw
+          $raw = $raw.Replace('SourceDir\', "$modelDir\")
+          Set-Content $outFile $raw -Encoding UTF8
+
+          $wixproj = "WorshipHelperSetup\WorshipHelperSetup.wixproj"
+          [xml]$xml = Get-Content $wixproj
+          $ns = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
+          $ns.AddNamespace("ms", "http://schemas.microsoft.com/developer/msbuild/2003")
+          $ig = $xml.SelectSingleNode("//ms:ItemGroup[ms:Compile]", $ns)
+          $el = $xml.CreateElement("Compile", "http://schemas.microsoft.com/developer/msbuild/2003")
+          $el.SetAttribute("Include", "VoskModel.wxs")
+          $ig.AppendChild($el) | Out-Null
+          $xml.Save((Resolve-Path $wixproj))
+
+      - name: Build MSI
+        run: |
+          $targetDir = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\bin\Release\"
+          msbuild WorshipHelperSetup\WorshipHelperSetup.wixproj `
+            /p:Configuration=Release `
+            /p:Platform=x86 `
+            /p:DefineConstants="WorshipHelperVSTO.TargetDir=$targetDir" `
+            /verbosity:normal
+
+      - name: Upload MSI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WorshipHelperSetup
+          path: WorshipHelperSetup\bin\Release\**\WorshipHelperSetup.msi
