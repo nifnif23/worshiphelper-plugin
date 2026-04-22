@@ -87,13 +87,27 @@ namespace WorshipHelperVSTO
         // -----------------------------------------------------------------------
         private static readonly HashSet<string> PreambleWords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "read", "reading", "turn", "turning", "go", "going", "look", "looking",
-            "open", "opening", "find", "finding", "flip", "flipping",
+            // Action verbs that precede a reference
+            "read", "reading", "reads", "turn", "turning", "turns",
+            "go", "going", "goes", "look", "looking", "looks",
+            "open", "opening", "opens", "find", "finding", "finds",
+            "flip", "flipping", "flips", "jump", "jumping",
+            "see", "check", "take", "taking", "hear", "hearing",
+
+            // Small words / articles / politeness fillers
             "let's", "lets", "let", "us", "please", "now", "okay", "ok",
-            "to", "at", "in", "from", "the", "book", "passage",
-            // NOTE: "of" intentionally removed — it breaks "Song of Solomon" matching
-            "scripture", "text", "it's", "its", "says", "we're", "were",
-            "i'm", "im", "today", "tonight", "this", "morning", "evening",
+            "to", "at", "in", "from", "the", "a", "an", "book", "passage",
+            // NOTE: "of" intentionally absent — it breaks "Song of Solomon"
+            "scripture", "scriptures", "text", "verse", "chapter",
+            "it's", "its", "says", "say", "said",
+            "we're", "were", "we", "i'm", "im", "i",
+            "you", "all", "everyone", "together",
+            "today", "tonight", "tomorrow", "this", "that",
+            "morning", "evening", "afternoon",
+
+            // Common v3 (open-dictation) preamble phrases become single tokens
+            // like "lets" / "turn" / "to" / "book" during splitting.
+            "with", "about", "concerning", "regarding",
         };
 
         // -----------------------------------------------------------------------
@@ -137,7 +151,10 @@ namespace WorshipHelperVSTO
                     continue;
                 }
 
-                // Try to match a Bible book name starting at this position
+                // Try to match a Bible book name starting at this position.
+                // Numbered books ("first corinthians", "1 john") need special care:
+                // the ordinal word / digit should be consumed as part of the book
+                // match, not mistakenly treated as a preamble word before it.
                 var (book, tokensConsumed, wasFuzzy) = TryMatchBook(tokens, pos);
                 if (book != null)
                 {

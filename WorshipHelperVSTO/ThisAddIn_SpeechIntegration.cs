@@ -257,10 +257,25 @@ namespace WorshipHelperVSTO
             }
 
             // INSERT THE SCRIPTURE — calls your existing ScriptureManager!
-            new ScriptureManager().addScripture(
+            var sm = new ScriptureManager();
+            int firstSlide = sm.addScripture(
                 template, bible, bookName, parsedRef.Chapter, verseNumbers, multiVerse);
 
-            log.Info($"Successfully inserted scripture from speech: {normalisedReference}");
+            log.Info($"Successfully inserted scripture from speech: {normalisedReference} (slide {firstSlide})");
+
+            // Auto-advance to the newly-inserted slide. This is the whole point
+            // of a voice-driven workflow — when the presenter says a reference,
+            // they expect the slide to appear on screen. Works in presenter
+            // view AND edit mode; fails silently if PowerPoint won't cooperate.
+            try
+            {
+                if (firstSlide > 0)
+                    new SelectionManager().NavigateToInsertedSlide(firstSlide);
+            }
+            catch (Exception navEx)
+            {
+                log.Warn($"Could not navigate to inserted slide {firstSlide}: {navEx.Message}");
+            }
         }
 
         private void SpeechService_OnStatusChanged(object sender, ServiceStatusEventArgs e)

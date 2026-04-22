@@ -540,19 +540,33 @@ namespace WorshipHelperVSTO
 
             log.Debug($"Final verse list: {string.Join(",", verseNumbers)}");
 
-            new ScriptureManager().addScripture(
+            var sm = new ScriptureManager();
+            int firstSlide = sm.addScripture(
                 cmbTemplate.SelectedItem as ScriptureTemplate,
                 bible,
                 book.name,
                 parsed.Chapter,
                 verseNumbers,
                 chkMultiVerse.Checked);
+
+            // Navigate the active view to the newly-inserted slide so users
+            // immediately see the scripture that was just added.
+            try
+            {
+                if (firstSlide > 0)
+                    new SelectionManager().NavigateToInsertedSlide(firstSlide);
+            }
+            catch (Exception navEx)
+            {
+                log.Warn($"Could not navigate to inserted slide {firstSlide}: {navEx.Message}");
+            }
         }
 
         private void InsertBulk()
         {
             var lines = SplitBulkInput(txtBulk.Text);
             int inserted = 0;
+            int lastInsertedSlideIndex = -1;
             var errors = new List<string>();
 
             foreach (var line in lines)
@@ -598,13 +612,18 @@ namespace WorshipHelperVSTO
                         continue;
                     }
 
-                    new ScriptureManager().addScripture(
+                    var smBulk = new ScriptureManager();
+                    int firstSlideBulk = smBulk.addScripture(
                         cmbTemplate.SelectedItem as ScriptureTemplate,
                         bible,
                         book.name,
                         chapterNum,
                         verseNumbers,
                         chkMultiVerse.Checked);
+
+                    // Navigate to the LAST inserted scripture once the loop completes
+                    // (stored in a local, used below).
+                    lastInsertedSlideIndex = firstSlideBulk;
 
                     inserted++;
                 }
@@ -621,6 +640,19 @@ namespace WorshipHelperVSTO
                              string.Join("\n", errors.Select(e => "\u2022 " + e));
                 MessageBox.Show(msg, "Bulk Insert Results", MessageBoxButtons.OK,
                     errors.Count == lines.Count ? MessageBoxIcon.Error : MessageBoxIcon.Warning);
+            }
+
+            // After bulk insert, navigate to the first slide inserted for the
+            // LAST valid reference. (Navigating to each in turn would be
+            // disorienting during live presentation.)
+            try
+            {
+                if (lastInsertedSlideIndex > 0)
+                    new SelectionManager().NavigateToInsertedSlide(lastInsertedSlideIndex);
+            }
+            catch (Exception navEx)
+            {
+                log.Warn($"Could not navigate to bulk-inserted slide: {navEx.Message}");
             }
         }
 

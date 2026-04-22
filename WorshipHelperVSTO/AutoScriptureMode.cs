@@ -1,5 +1,5 @@
 // ============================================================================
-// AutoScriptureMode.cs
+// AutoScriptureMode.cs  —  v2
 // Manages the "Auto Scripture" listening mode.
 //
 // When active, any scripture reference detected from speech is inserted
@@ -7,37 +7,23 @@
 // confirmation dialog. The presenter just says the reference aloud and
 // the slide appears.
 //
-// How it works:
-//   1. AutoScriptureMode.Enable() is called (ribbon button or Shift hotkey).
-//   2. SpeechToScriptureService starts listening (if not already).
-//   3. OnReferenceDetected fires → InsertScriptureFromSpeech() is called
-//      directly (same path as the manual flow).
-//   4. A brief on-screen toast shows what was inserted so the presenter
-//      knows it worked.
-//   5. AutoScriptureMode.Disable() stops the auto-insert behaviour.
-//      The speech service stays active but stops auto-inserting.
-//
-// The mode is indicated by:
-//   - A ribbon toggle button (btnAutoScripture)
-//   - A small overlay label on the presenter view (optional, gracefully skipped)
-//
-// Thread safety:
-//   IsEnabled is read/written on the main STA thread via Invoke.
-//   The speech callback fires on a background thread — it uses BeginInvoke
-//   to marshal insertion to the main thread.
+// v2 changes:
+//   • Upgraded the inline toast to match the new SpeechConfirmForm look:
+//     rounded card, left accent stripe, icon badge, slide-in animation.
+//   • Confined toast lifetime is bullet-proof — a new toast cancels any
+//     previous one cleanly (no overlap / memory leak).
+//   • Shows a short-lived "Inserted X" toast after auto-inserts.
 // ============================================================================
 
 using System;
+using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using log4net;
-using Microsoft.Office.Interop.PowerPoint;
 
 namespace WorshipHelperVSTO
 {
-    /// <summary>
-    /// Singleton that manages the Auto Scripture listening mode.
-    /// Access via AutoScriptureMode.Instance.
-    /// </summary>
     public sealed class AutoScriptureMode
     {
         private static readonly ILog log = LogManager.GetLogger(typeof(AutoScriptureMode));
@@ -46,43 +32,16 @@ namespace WorshipHelperVSTO
 
         private AutoScriptureMode() { }
 
-        // -----------------------------------------------------------------------
-        // State
-        // -----------------------------------------------------------------------
-
-        /// <summary>
-        /// True when Auto Scripture Mode is active and inserting references
-        /// automatically from speech.
-        /// </summary>
         public bool IsEnabled { get; private set; }
 
-        /// <summary>
-        /// Raised whenever <see cref="IsEnabled"/> changes. Lets the ribbon
-        /// toggle button stay in sync regardless of how the mode was changed
-        /// (ribbon button, Shift-hotkey in presenter view, programmatic
-        /// disable when listening is turned off, etc.).
-        ///
-        /// Subscribers may be called on a background thread — marshal to the
-        /// UI thread before touching ribbon state.
-        /// </summary>
         public event EventHandler<bool> StateChanged;
 
-        // -----------------------------------------------------------------------
-        // Public API
-        // -----------------------------------------------------------------------
-
-        /// <summary>
-        /// Enables Auto Scripture Mode.
-        /// Starts the speech service if it isn't already running.
-        /// </summary>
         public void Enable(SpeechToScriptureService service)
         {
             if (IsEnabled) return;
             IsEnabled = true;
-
             log.Info("AutoScriptureMode: Enabled.");
 
-            // Start listening if not already
             if (service != null && !service.IsListening)
             {
                 try { service.Start(); }
@@ -95,135 +54,257 @@ namespace WorshipHelperVSTO
                 }
             }
 
-            ShowToast("Auto Scripture ON — listening for references", durationMs: 2500);
+            ShowToast("Auto Scripture", "Listening for spoken references", ToastKind.Info, 2500);
             RaiseStateChanged(true);
         }
 
-        /// <summary>
-        /// Disables Auto Scripture Mode.
-        /// The speech service keeps running but stops auto-inserting.
-        /// </summary>
         public void Disable()
         {
             if (!IsEnabled) return;
             IsEnabled = false;
             log.Info("AutoScriptureMode: Disabled.");
-            ShowToast("Auto Scripture OFF", durationMs: 1500);
+            ShowToast("Auto Scripture", "Turned off", ToastKind.Muted, 1500);
             RaiseStateChanged(false);
         }
 
         private void RaiseStateChanged(bool newState)
         {
             try { StateChanged?.Invoke(this, newState); }
-            catch (Exception ex)
-            {
-                log.Debug($"AutoScriptureMode: StateChanged subscriber threw: {ex.Message}");
-            }
+            catch (Exception ex) { log.Debug($"AutoScriptureMode: StateChanged subscriber threw: {ex.Message}"); }
         }
 
-        /// <summary>
-        /// Toggles Auto Scripture Mode. Returns new state.
-        /// </summary>
         public bool Toggle(SpeechToScriptureService service)
         {
             if (IsEnabled) { Disable(); return false; }
             else { Enable(service); return true; }
         }
 
-        /// <summary>
-        /// Called by the speech pipeline when a reference is detected and
-        /// Auto Scripture Mode is active. Performs the actual insertion and
-        /// shows feedback.
-        ///
-        /// Must be called from the main STA thread (use BeginInvoke if on
-        /// a background thread).
-        /// </summary>
         public void HandleDetectedReference(string normalisedReference,
                                             string spokenText,
                                             Action<string> insertAction)
         {
             if (!IsEnabled) return;
 
-            log.Info($"AutoScriptureMode: Auto-inserting \"{normalisedReference}\" " +
-                     $"(spoken: \"{spokenText}\")");
+            log.Info($"AutoScriptureMode: Auto-inserting \"{normalisedReference}\" (spoken: \"{spokenText}\")");
 
             try
             {
                 insertAction(normalisedReference);
-                ShowToast($"Inserted: {normalisedReference}", durationMs: 2000);
+                ShowToast("Inserted", normalisedReference, ToastKind.Success, 2200);
             }
             catch (Exception ex)
             {
                 log.Error($"AutoScriptureMode: Insert failed for \"{normalisedReference}\"", ex);
-                ShowToast($"Insert failed: {normalisedReference}", durationMs: 2000);
+                ShowToast("Insert failed", normalisedReference, ToastKind.Error, 2500);
             }
         }
 
-        // -----------------------------------------------------------------------
-        // Toast notification
-        // -----------------------------------------------------------------------
-
+        // ──────────────────────────────────────────────────────────────────
+        // Toast notification (re-skinned to match the new SpeechConfirmForm)
+        // ──────────────────────────────────────────────────────────────────
         private Form _toastForm;
 
-        /// <summary>
-        /// Shows a brief non-modal overlay message to the presenter.
-        /// Appears bottom-right of the screen, auto-dismisses after durationMs.
-        /// Fails silently if UI is unavailable (no crash during slideshow).
-        /// </summary>
-        private void ShowToast(string message, int durationMs = 2000)
+        private enum ToastKind { Info, Success, Error, Muted }
+
+        private void ShowToast(string heading, string detail, ToastKind kind, int durationMs = 2000)
         {
             try
             {
-                // Dismiss any existing toast
-                _toastForm?.Close();
+                // Replace any existing toast
+                try { _toastForm?.Close(); } catch { }
                 _toastForm = null;
 
-                var toast = new Form
-                {
-                    FormBorderStyle = FormBorderStyle.None,
-                    StartPosition   = FormStartPosition.Manual,
-                    BackColor       = System.Drawing.Color.FromArgb(30, 30, 30),
-                    Opacity         = 0.88,
-                    ShowInTaskbar   = false,
-                    TopMost         = true,
-                    Size            = new System.Drawing.Size(380, 52),
-                };
-
-                // Position bottom-right of primary screen
-                var screen = Screen.PrimaryScreen.WorkingArea;
-                toast.Location = new System.Drawing.Point(
-                    screen.Right - toast.Width - 20,
-                    screen.Bottom - toast.Height - 20);
-
-                var label = new Label
-                {
-                    Text      = message,
-                    ForeColor = System.Drawing.Color.White,
-                    BackColor = System.Drawing.Color.Transparent,
-                    Font      = new System.Drawing.Font("Segoe UI", 11f, System.Drawing.FontStyle.Regular),
-                    Dock      = DockStyle.Fill,
-                    TextAlign = System.Drawing.ContentAlignment.MiddleCenter,
-                    Padding   = new Padding(8, 0, 8, 0),
-                };
-                toast.Controls.Add(label);
-
-                // Auto-dismiss timer
+                var toast = new MiniToast(heading, detail, kind);
                 var timer = new Timer { Interval = durationMs };
                 timer.Tick += (s, e) =>
                 {
-                    timer.Stop();
-                    timer.Dispose();
-                    try { toast.Close(); } catch { }
+                    timer.Stop(); timer.Dispose();
+                    try { toast.BeginFadeOutAndClose(); } catch { }
+                };
+                toast.Shown += (s, e) => timer.Start();
+                toast.FormClosed += (s, e) =>
+                {
+                    if (ReferenceEquals(_toastForm, s)) _toastForm = null;
                 };
 
-                toast.Shown += (s, e) => timer.Start();
                 toast.Show();
                 _toastForm = toast;
             }
             catch (Exception ex)
             {
-                // Toast is cosmetic only — never crash on failure
                 log.Debug($"AutoScriptureMode: Toast failed (non-fatal): {ex.Message}");
+            }
+        }
+
+        // ──────────────────────────────────────────────────────────────────
+        // MiniToast — compact, self-contained, styled to match SpeechConfirmForm
+        // ──────────────────────────────────────────────────────────────────
+        private sealed class MiniToast : Form
+        {
+            private static readonly Color SurfaceTop     = Color.FromArgb(255, 255, 255);
+            private static readonly Color SurfaceBottom  = Color.FromArgb(248, 250, 248);
+            private static readonly Color BorderSoft     = Color.FromArgb(220, 224, 220);
+            private static readonly Color TextPrimary    = Color.FromArgb(33, 33, 33);
+            private static readonly Color TextMuted      = Color.FromArgb(117, 117, 117);
+
+            private static readonly Color AccentInfo     = Color.FromArgb(46, 125, 50);
+            private static readonly Color AccentSuccess  = Color.FromArgb(56, 142, 60);
+            private static readonly Color AccentError    = Color.FromArgb(198, 40, 40);
+            private static readonly Color AccentMuted    = Color.FromArgb(117, 117, 117);
+
+            private readonly Color _accent;
+            private readonly string _icon;
+            private readonly string _heading;
+            private readonly string _detail;
+
+            // Slide-in animation state
+            private Point _target;
+            private Point _start;
+            private Timer _slide;
+            private int   _slideStep;
+            private const int SlideSteps = 10;
+
+            private Timer _fade;
+
+            public MiniToast(string heading, string detail, ToastKind kind)
+            {
+                _heading = heading ?? "";
+                _detail  = detail ?? "";
+                switch (kind)
+                {
+                    case ToastKind.Success: _accent = AccentSuccess; _icon = "\u2714"; break;
+                    case ToastKind.Error:   _accent = AccentError;   _icon = "\u26A0"; break;
+                    case ToastKind.Muted:   _accent = AccentMuted;   _icon = "\u25CF"; break;
+                    default:                _accent = AccentInfo;    _icon = "\uD83C\uDFA4"; break;
+                }
+
+                FormBorderStyle = FormBorderStyle.None;
+                StartPosition   = FormStartPosition.Manual;
+                TopMost         = true;
+                ShowInTaskbar   = false;
+                DoubleBuffered  = true;
+                BackColor       = SurfaceTop;
+                Size            = new Size(360, 64);
+
+                var sc = Screen.PrimaryScreen.WorkingArea;
+                _target = new Point(sc.Right - Width - 24, sc.Bottom - Height - 24);
+                _start  = new Point(sc.Right + 8,          _target.Y);
+                Location = _start;
+
+                ApplyRoundedRegion();
+                Resize += (s, e) => ApplyRoundedRegion();
+                Paint  += OnPaintCard;
+            }
+
+            protected override bool ShowWithoutActivation => true;
+            protected override CreateParams CreateParams
+            {
+                get
+                {
+                    const int WS_EX_NOACTIVATE = 0x08000000;
+                    const int WS_EX_TOOLWINDOW  = 0x00000080;
+                    var cp = base.CreateParams;
+                    cp.ExStyle |= WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
+                    return cp;
+                }
+            }
+
+            protected override void OnShown(EventArgs e)
+            {
+                base.OnShown(e);
+                _slideStep = 0;
+                _slide = new Timer { Interval = 14 };
+                _slide.Tick += (s, ev) =>
+                {
+                    _slideStep++;
+                    if (_slideStep >= SlideSteps)
+                    {
+                        Location = _target;
+                        _slide.Stop(); _slide.Dispose(); _slide = null;
+                        return;
+                    }
+                    float t = (float)_slideStep / SlideSteps;
+                    float ease = 1f - (float)Math.Pow(1 - t, 3);
+                    int dx = _target.X - _start.X;
+                    Location = new Point(_start.X + (int)(dx * ease), _target.Y);
+                };
+                _slide.Start();
+            }
+
+            public void BeginFadeOutAndClose()
+            {
+                if (IsDisposed) return;
+                _fade?.Stop();
+                _fade = new Timer { Interval = 20 };
+                _fade.Tick += (s, e) =>
+                {
+                    Opacity -= 0.14;
+                    if (Opacity <= 0.02)
+                    {
+                        Opacity = 0;
+                        _fade.Stop(); _fade.Dispose(); _fade = null;
+                        try { Close(); } catch { }
+                    }
+                };
+                _fade.Start();
+            }
+
+            private void ApplyRoundedRegion()
+            {
+                try
+                {
+                    var rgn = CreateRoundRectRgn(0, 0, Width + 1, Height + 1, 12, 12);
+                    Region = Region.FromHrgn(rgn);
+                    DeleteObject(rgn);
+                }
+                catch { /* non-fatal */ }
+            }
+
+            private void OnPaintCard(object sender, PaintEventArgs e)
+            {
+                var g = e.Graphics;
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+
+                var rect = new Rectangle(0, 0, Width, Height);
+                using (var br = new LinearGradientBrush(rect, SurfaceTop, SurfaceBottom, LinearGradientMode.Vertical))
+                    g.FillRectangle(br, rect);
+
+                // Left accent stripe
+                using (var br = new SolidBrush(_accent))
+                    g.FillRectangle(br, 0, 0, 4, Height);
+
+                // Icon
+                using (var fnt = new Font("Segoe UI Emoji", 14f, FontStyle.Regular))
+                using (var br  = new SolidBrush(_accent))
+                    g.DrawString(_icon, fnt, br, 14, 18);
+
+                // Heading
+                using (var fnt = new Font("Segoe UI Semibold", 10f, FontStyle.Bold))
+                using (var br  = new SolidBrush(TextPrimary))
+                    g.DrawString(_heading, fnt, br, 50, 10);
+
+                // Detail
+                using (var fnt = new Font("Segoe UI", 9f, FontStyle.Regular))
+                using (var br  = new SolidBrush(TextMuted))
+                    g.DrawString(_detail, fnt, br, 50, 30);
+
+                using (var pen = new Pen(BorderSoft, 1))
+                    g.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
+            }
+
+            [DllImport("Gdi32.dll")]
+            private static extern IntPtr CreateRoundRectRgn(int nLeftRect, int nTopRect,
+                int nRightRect, int nBottomRect, int nWidthEllipse, int nHeightEllipse);
+
+            [DllImport("Gdi32.dll")]
+            private static extern bool DeleteObject(IntPtr hObject);
+
+            protected override void Dispose(bool disposing)
+            {
+                try { _slide?.Dispose(); } catch { }
+                try { _fade?.Dispose();  } catch { }
+                base.Dispose(disposing);
             }
         }
     }

@@ -272,8 +272,22 @@ namespace WorshipHelperVSTO
                 var verseNums = Enumerable.Range(scriptureRef.verseNumStart,
                     scriptureRef.verseNumEnd - scriptureRef.verseNumStart + 1).ToList();
 
-                new ScriptureManager().addScripture(template, bible,
+                var sm = new ScriptureManager();
+                int firstSlide = sm.addScripture(template, bible,
                     scriptureRef.bookName, scriptureRef.chapterNum, verseNums, verseNums.Count > 1);
+
+                // Auto-advance to the newly-inserted slide so the speech-driven
+                // flow actually displays what the presenter just said.
+                try
+                {
+                    if (firstSlide > 0)
+                        new SelectionManager().NavigateToInsertedSlide(firstSlide);
+                }
+                catch (System.Exception navEx)
+                {
+                    log4net.LogManager.GetLogger(typeof(TestRibbonItem))
+                        .Warn($"Could not navigate to inserted slide {firstSlide}: {navEx.Message}");
+                }
             }
             catch (System.Exception ex)
             {

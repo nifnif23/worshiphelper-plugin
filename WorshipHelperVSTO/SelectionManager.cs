@@ -149,6 +149,53 @@ namespace WorshipHelperVSTO
             }
         }
 
+        /// <summary>
+        /// Navigates the active PowerPoint view to the given slide index.
+        /// Works in both normal edit mode (moves the edit cursor) AND live
+        /// slideshow mode (advances the presenter to the given slide).
+        /// Fails silently if navigation isn't possible — insertion has already
+        /// happened at that point, so we never want to crash here.
+        /// </summary>
+        public void NavigateToInsertedSlide(int slideIndex)
+        {
+            if (slideIndex < 1) return;
+
+            // 1) If a slideshow is active, use the slideshow view — that's what
+            //    the audience actually sees. This is the case users care about
+            //    most: "I spoke a reference, make the slide appear on screen".
+            try
+            {
+                var app = Globals.ThisAddIn.Application;
+                if (app.SlideShowWindows.Count > 0)
+                {
+                    try
+                    {
+                        var ssw = app.ActivePresentation.SlideShowWindow;
+                        if (ssw != null && ssw.View != null)
+                        {
+                            int total = app.ActivePresentation.Slides.Count;
+                            int safeIdx = Math.Max(1, Math.Min(total, slideIndex));
+                            ssw.View.GotoSlide(safeIdx);
+                            Debug.WriteLine($"NavigateToInsertedSlide: slideshow → {safeIdx}");
+                            return;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"NavigateToInsertedSlide: slideshow GotoSlide failed: {ex.Message}");
+                        // fall through to edit-mode navigation
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"NavigateToInsertedSlide: app check failed: {ex.Message}");
+            }
+
+            // 2) Otherwise navigate the edit-mode main window.
+            GoToSlide(slideIndex);
+        }
+
         private int getLastSelectedIndex(SlideRange range)
         {
             int index = -1;

@@ -25,22 +25,30 @@ namespace WorshipHelperVSTO
         // -----------------------------------------------------------------------
 
         /// <summary>
-        /// Inserts scripture slides for a simple contiguous range (legacy signature).
+        /// Last slide index where an insertion landed. Callers (e.g. the speech
+        /// pipeline) use this to automatically navigate the presentation to the
+        /// newly-inserted reference. -1 means "never inserted".
         /// </summary>
-        public void addScripture(ScriptureTemplate template, Bible bible, string bookName,
+        public int LastInsertedSlideIndex { get; private set; } = -1;
+
+        /// <summary>
+        /// Inserts scripture slides for a simple contiguous range (legacy signature).
+        /// Returns the 1-based index of the first inserted slide, or -1 on failure.
+        /// </summary>
+        public int addScripture(ScriptureTemplate template, Bible bible, string bookName,
                                  int chapterNum, int verseNumStart, int verseNumEnd,
                                  bool multiVerse = false)
         {
             // Build a flat, contiguous verse list and forward to the list-based overload.
             var verseNumbers = Enumerable.Range(verseNumStart, verseNumEnd - verseNumStart + 1).ToList();
-            addScripture(template, bible, bookName, chapterNum, verseNumbers, multiVerse);
+            return addScripture(template, bible, bookName, chapterNum, verseNumbers, multiVerse);
         }
 
         /// <summary>
         /// Inserts scripture slides for an arbitrary (possibly non-contiguous) list of verse numbers.
         /// This is the preferred entry-point used by the new UI.
         /// </summary>
-        public void addScripture(ScriptureTemplate template, Bible bible, string bookName,
+        public int addScripture(ScriptureTemplate template, Bible bible, string bookName,
                                  int chapterNum, List<int> verseNumbers,
                                  bool multiVerse = false)
         {
@@ -70,16 +78,20 @@ namespace WorshipHelperVSTO
             // Build a human-readable reference label
             string referenceLabel = BuildReferenceLabel(bookName, chapterNum, verseNumbers, chapter.verses.Count, translation);
 
+            int firstInsertedIndex;
             if (multiVerse)
-                addScriptureMultiVerse(template, chapter, verseList, referenceLabel, translation);
+                firstInsertedIndex = addScriptureMultiVerse(template, chapter, verseList, referenceLabel, translation);
             else
-                addScriptureOneVersePerSlide(template, chapter, verseList, bookName, chapterNum, translation);
+                firstInsertedIndex = addScriptureOneVersePerSlide(template, chapter, verseList, bookName, chapterNum, translation);
+
+            LastInsertedSlideIndex = firstInsertedIndex;
+            return firstInsertedIndex;
         }
 
         // -----------------------------------------------------------------------
         // MODE A: One verse per slide
         // -----------------------------------------------------------------------
-        private void addScriptureOneVersePerSlide(ScriptureTemplate template, Chapter chapter,
+        private int addScriptureOneVersePerSlide(ScriptureTemplate template, Chapter chapter,
                                                   List<Verse> verseList, string bookName,
                                                   int chapterNum, string translation)
         {
@@ -127,7 +139,7 @@ namespace WorshipHelperVSTO
                 ApplySuperscriptMarkers(objBodyTextBox, new List<Verse> { verse });
             }
 
-            templatePresentation.Close();
+            try { templatePresentation.Close(); } catch { /* best effort */ }
 
             // Select all inserted slides
             int slideCount = verseList.Count;
@@ -146,6 +158,7 @@ namespace WorshipHelperVSTO
                     log.Warn($"Could not select inserted slides (this is normal during live presentation): {ex.Message}");
                 }
             }
+            return insertAt;
         }
 
         // -----------------------------------------------------------------------
@@ -155,7 +168,7 @@ namespace WorshipHelperVSTO
         // slide duplication errors and index corruption. Now uses a single
         // greedy pass: pack as many verses as will fit on each slide.
         // -----------------------------------------------------------------------
-        private void addScriptureMultiVerse(ScriptureTemplate template, Chapter chapter,
+        private int addScriptureMultiVerse(ScriptureTemplate template, Chapter chapter,
                                             List<Verse> verseList, string referenceLabel,
                                             string translation)
         {
@@ -266,7 +279,7 @@ namespace WorshipHelperVSTO
                 ApplySuperscriptMarkers(objBodyTextBox, slideBatches[s]);
             }
 
-            templatePresentation.Close();
+            try { templatePresentation.Close(); } catch { /* best effort */ }
 
             // Select all newly inserted slides
             int totalSlides = slideBatches.Count;
@@ -285,6 +298,7 @@ namespace WorshipHelperVSTO
                     log.Warn($"Could not select inserted slides (this is normal during live presentation): {ex.Message}");
                 }
             }
+            return startSlideIndex;
         }
 
         // -----------------------------------------------------------------------
