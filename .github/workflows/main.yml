@@ -35,6 +35,29 @@ jobs:
       - name: Restore NuGet packages
         run: nuget restore WorshipHelper.sln
 
+      - name: Extract System.Data.SQLite (nuget restore skips native packages)
+        run: |
+          $packagesDir = "$env:GITHUB_WORKSPACE\packages"
+          $sqlitePkgDir = Get-ChildItem $packagesDir -Filter "System.Data.SQLite.Core.*" -Directory |
+            Sort-Object Name | Select-Object -Last 1
+          if (-not $sqlitePkgDir) {
+            Write-Host "SQLite package dir not found -- running nuget install to fetch it."
+            nuget install System.Data.SQLite.Core -OutputDirectory $packagesDir -NonInteractive
+            $sqlitePkgDir = Get-ChildItem $packagesDir -Filter "System.Data.SQLite.Core.*" -Directory |
+              Sort-Object Name | Select-Object -Last 1
+          }
+          if (Test-Path (Join-Path $sqlitePkgDir.FullName "lib")) {
+            Write-Host "SQLite already extracted at $($sqlitePkgDir.FullName)"
+          } else {
+            $nupkg = Get-ChildItem $sqlitePkgDir.FullName -Filter "*.nupkg" | Select-Object -First 1
+            Write-Host "Extracting $($nupkg.FullName) ..."
+            Expand-Archive -Path $nupkg.FullName -DestinationPath $sqlitePkgDir.FullName -Force
+            Write-Host "Extracted contents:"
+            Get-ChildItem $sqlitePkgDir.FullName -Recurse -File |
+              Select-Object -ExpandProperty FullName |
+              ForEach-Object { $_.Replace($sqlitePkgDir.FullName, '') }
+          }
+
       # ═════════════════════════════════════════════════════════════════
       # 2. Resolve managed assembly paths (Vosk → SQLite + Json.NET)
       # ═════════════════════════════════════════════════════════════════
