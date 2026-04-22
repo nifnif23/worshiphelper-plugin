@@ -5,22 +5,27 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  # Using the SMALL model (~50 MB) for fast load and small MSI. Accuracy is
-  # slightly lower than the 1.8 GB model but the two-phase grammar + phonetic
-  # corrector pipeline compensates for the difference.
-  VOSK_MODEL_URL: https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
-  VOSK_MODEL_CACHE_KEY: vosk-model-small-en-us-0.15
+  EMBED_MODEL: sentence-transformers/all-MiniLM-L6-v2
+  PYTHON_VERSION: "3.11"
 
 jobs:
   build:
     runs-on: windows-2022
 
     steps:
+      # ═════════════════════════════════════════════════════════════════
+      # 1. Source + toolchain
+      # ═════════════════════════════════════════════════════════════════
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
+
+      - name: Setup Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Set WiX environment variable
         run: |
@@ -30,6 +35,9 @@ jobs:
       - name: Restore NuGet packages
         run: nuget restore WorshipHelper.sln
 
+      # ═════════════════════════════════════════════════════════════════
+      # 2. Resolve managed assembly paths (Vosk → SQLite + Json.NET)
+      # ═════════════════════════════════════════════════════════════════
       - name: Resolve assembly HintPaths
         run: |
           $packagesDir = "$env:GITHUB_WORKSPACE\packages"
@@ -38,42 +46,88 @@ jobs:
             Sort-Object { $_.FullName } | Select-Object -Last 1
           $naudioWinMM = Get-ChildItem "$packagesDir\NAudio.WinMM.*\lib" -Recurse -Filter "NAudio.WinMM.dll" |
             Sort-Object { $_.FullName } | Select-Object -Last 1
-          $vosk = Get-ChildItem "$packagesDir\Vosk.*\lib" -Recurse -Filter "Vosk.dll" |
+
+          # SQLite managed DLL — prefer net46 build for .NET Framework 4.7.2
+          $sqlite = Get-ChildItem "$packagesDir\System.Data.SQLite.Core.*\lib\net46" -Recurse -Filter "System.Data.SQLite.dll" |
             Sort-Object { $_.FullName } | Select-Object -Last 1
+          if (-not $sqlite) {
+            $sqlite = Get-ChildItem "$packagesDir\System.Data.SQLite.Core.*\lib" -Recurse -Filter "System.Data.SQLite.dll" |
+              Sort-Object { $_.FullName } | Select-Object -Last 1
+          }
 
-          if (-not $naudioCore) { throw "NAudio.Core.dll not found" }
-          if (-not $naudioWinMM) { throw "NAudio.WinMM.dll not found" }
-          if (-not $vosk)        { throw "Vosk.dll not found" }
+          # SQLite native interop — x86 because the MSI is x86
+          $sqliteInterop = Get-ChildItem "$packagesDir\System.Data.SQLite.Core.*\build\net46\x86" -Recurse -Filter "SQLite.Interop.dll" -ErrorAction SilentlyContinue |
+            Sort-Object { $_.FullName } | Select-Object -Last 1
+          if (-not $sqliteInterop) {
+            $sqliteInterop = Get-ChildItem "$packagesDir\System.Data.SQLite.Core.*" -Recurse -Filter "SQLite.Interop.dll" |
+              Where-Object { $_.FullName -like "*x86*" } |
+              Sort-Object { $_.FullName } | Select-Object -Last 1
+          }
 
-          echo "NAUDIO_CORE_PATH=$($naudioCore.FullName)"   >> $env:GITHUB_ENV
-          echo "NAUDIO_WINMM_PATH=$($naudioWinMM.FullName)" >> $env:GITHUB_ENV
-          echo "VOSK_PATH=$($vosk.FullName)"                >> $env:GITHUB_ENV
+          $newtonsoft = Get-ChildItem "$packagesDir\Newtonsoft.Json.*\lib\net45" -Recurse -Filter "Newtonsoft.Json.dll" |
+            Sort-Object { $_.FullName } | Select-Object -Last 1
+          if (-not $newtonsoft) {
+            $newtonsoft = Get-ChildItem "$packagesDir\Newtonsoft.Json.*\lib" -Recurse -Filter "Newtonsoft.Json.dll" |
+              Sort-Object { $_.FullName } | Select-Object -Last 1
+          }
 
-      # -----------------------------------------------------------------------
-      # Cache hit  = instant restore, no download ever again
-      # Cache miss = download once, cache persists for all future runs
-      # To switch models: change VOSK_MODEL_CACHE_KEY above
-      # -----------------------------------------------------------------------
-      - name: Restore Vosk model from cache
-        id: cache-vosk-model
+          if (-not $naudioCore)    { throw "NAudio.Core.dll not found" }
+          if (-not $naudioWinMM)   { throw "NAudio.WinMM.dll not found" }
+          if (-not $sqlite)        { throw "System.Data.SQLite.dll not found" }
+          if (-not $sqliteInterop) { throw "SQLite.Interop.dll (x86) not found" }
+          if (-not $newtonsoft)    { throw "Newtonsoft.Json.dll not found" }
+
+          echo "NAUDIO_CORE_PATH=$($naudioCore.FullName)"      >> $env:GITHUB_ENV
+          echo "NAUDIO_WINMM_PATH=$($naudioWinMM.FullName)"    >> $env:GITHUB_ENV
+          echo "SQLITE_PATH=$($sqlite.FullName)"               >> $env:GITHUB_ENV
+          echo "SQLITE_INTEROP_PATH=$($sqliteInterop.FullName)" >> $env:GITHUB_ENV
+          echo "NEWTONSOFT_PATH=$($newtonsoft.FullName)"       >> $env:GITHUB_ENV
+
+          Write-Host "Resolved assemblies:"
+          Write-Host "  NAudio.Core       → $($naudioCore.FullName)"
+          Write-Host "  NAudio.WinMM      → $($naudioWinMM.FullName)"
+          Write-Host "  System.Data.SQLite→ $($sqlite.FullName)"
+          Write-Host "  SQLite.Interop    → $($sqliteInterop.FullName)"
+          Write-Host "  Newtonsoft.Json   → $($newtonsoft.FullName)"
+
+      # ═════════════════════════════════════════════════════════════════
+      # 3. Build verses.sqlite — one-shot embedding job
+      # ═════════════════════════════════════════════════════════════════
+      - name: Verse embedding cache key
+        id: emb-key
+        run: |
+          $bibleHash = (Get-FileHash WorshipHelperVSTO\data\Bibles\NASB.xmm -Algorithm SHA256).Hash.Substring(0,16)
+          $key = "verses-$env:EMBED_MODEL-$bibleHash" -replace '[\\/:*?""<>|]', '-'
+          echo "key=$key" >> $env:GITHUB_OUTPUT
+          Write-Host "Cache key: $key"
+
+      - name: Restore verses.sqlite from cache
+        id: cache-verses
         uses: actions/cache@v4
         with:
-          path: ${{ github.workspace }}\WorshipHelperVSTO\data\vosk-model
-          key: ${{ env.VOSK_MODEL_CACHE_KEY }}
+          path: WorshipHelperVSTO/data/verses.sqlite
+          key: ${{ steps.emb-key.outputs.key }}
 
-      - name: Download Vosk model (cache miss only)
-        if: steps.cache-vosk-model.outputs.cache-hit != 'true'
+      - name: Install Python deps for embedding build
+        if: steps.cache-verses.outputs.cache-hit != 'true'
         run: |
-          $modelZip  = "$env:TEMP\vosk-model.zip"
-          $modelDest = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\data\vosk-model"
-          Write-Host "Cache miss — downloading (~50 MB). Only happens once."
-          Invoke-WebRequest -Uri $env:VOSK_MODEL_URL -OutFile $modelZip -UseBasicParsing
-          Expand-Archive -Path $modelZip -DestinationPath "$env:TEMP\vosk-extracted" -Force
-          $inner = Get-ChildItem "$env:TEMP\vosk-extracted" | Select-Object -First 1
-          New-Item -ItemType Directory -Force -Path (Split-Path $modelDest) | Out-Null
-          Move-Item -Path $inner.FullName -Destination $modelDest -Force
-          Write-Host "Done."
+          python -m pip install --upgrade pip
+          pip install -r python_server\requirements.txt
 
+      - name: Build verses.sqlite (cache miss only)
+        if: steps.cache-verses.outputs.cache-hit != 'true'
+        run: |
+          Write-Host "Cache miss — embedding 31,102 verses (takes ~10 min on CPU)."
+          python python_server\build_verse_embeddings.py `
+            --bible "WorshipHelperVSTO\data\Bibles\NASB.xmm" `
+            --out   "WorshipHelperVSTO\data\verses.sqlite" `
+            --model "$env:EMBED_MODEL"
+          $size = (Get-Item WorshipHelperVSTO\data\verses.sqlite).Length / 1MB
+          Write-Host ("verses.sqlite built: {0:N1} MB" -f $size)
+
+      # ═════════════════════════════════════════════════════════════════
+      # 4. Code signing cert
+      # ═════════════════════════════════════════════════════════════════
       - name: Generate self-signed certificate
         run: |
           $cert = New-SelfSignedCertificate `
@@ -105,6 +159,9 @@ jobs:
           $content = $content.TrimEnd() + "`r`n$versionLine`r`n"
           Set-Content $path $content -NoNewline
 
+      # ═════════════════════════════════════════════════════════════════
+      # 5. Build VSTO
+      # ═════════════════════════════════════════════════════════════════
       - name: Build VSTO (Release)
         run: |
           msbuild WorshipHelperVSTO\WorshipHelperVSTO.csproj `
@@ -117,40 +174,81 @@ jobs:
             /p:ManifestCertificatePassword=build123 `
             /p:NAudioCoreHintPath="$env:NAUDIO_CORE_PATH" `
             /p:NAudioWinMMHintPath="$env:NAUDIO_WINMM_PATH" `
-            /p:VoskHintPath="$env:VOSK_PATH" `
+            /p:SQLiteHintPath="$env:SQLITE_PATH" `
+            /p:NewtonsoftJsonHintPath="$env:NEWTONSOFT_PATH" `
             /verbosity:minimal
 
+      # ═════════════════════════════════════════════════════════════════
+      # 6. Copy runtime dependencies to bin\Release
+      # ═════════════════════════════════════════════════════════════════
       - name: Copy NuGet DLLs to bin\Release
         run: |
-          $targetDir   = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\bin\Release"
-          $packagesDir = "$env:GITHUB_WORKSPACE\packages"
+          $targetDir = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\bin\Release"
 
-          Copy-Item $env:VOSK_PATH         $targetDir -Force
-          Copy-Item $env:NAUDIO_CORE_PATH  $targetDir -Force
-          Copy-Item $env:NAUDIO_WINMM_PATH $targetDir -Force
+          Copy-Item $env:NAUDIO_CORE_PATH    $targetDir -Force
+          Copy-Item $env:NAUDIO_WINMM_PATH   $targetDir -Force
+          Copy-Item $env:SQLITE_PATH         $targetDir -Force
+          Copy-Item $env:NEWTONSOFT_PATH     $targetDir -Force
+          Copy-Item $env:SQLITE_INTEROP_PATH $targetDir -Force
 
-          $voskDir = Split-Path $env:VOSK_PATH -Parent
-          if (-not (Test-Path (Join-Path $voskDir "libvosk.dll"))) {
-            $found = Get-ChildItem "$packagesDir\Vosk.*" -Recurse -Filter "libvosk.dll" | Select-Object -First 1
-            if (-not $found) { throw "libvosk.dll not found" }
-            $voskDir = $found.DirectoryName
-          }
-          Get-ChildItem $voskDir -Filter "*.dll" | ForEach-Object {
-            Copy-Item $_.FullName $targetDir -Force
-          }
+          Write-Host "Runtime DLLs in bin\Release:"
+          Get-ChildItem $targetDir -Filter *.dll | Select-Object Name, Length | Format-Table
 
-      # -----------------------------------------------------------------------
-      # Copy model from data\vosk-model (repo/cache location) into
-      # bin\Release\data\vosk-model so heat.exe can find it for harvesting.
-      # -----------------------------------------------------------------------
-      - name: Copy Vosk model to bin\Release
+      # ═════════════════════════════════════════════════════════════════
+      # 7. Stage data assets + Python sidecar
+      # ═════════════════════════════════════════════════════════════════
+      - name: Stage data + Python sidecar into bin\Release
         run: |
-          $src  = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\data\vosk-model"
-          $dest = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\bin\Release\data\vosk-model"
-          New-Item -ItemType Directory -Force -Path $dest | Out-Null
-          Copy-Item -Path "$src\*" -Destination $dest -Recurse -Force
-          Write-Host "Model copied to bin\Release: $((Get-ChildItem $dest -Recurse -File).Count) files"
+          $releaseDir = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\bin\Release"
+          $dataDest   = Join-Path $releaseDir "data"
+          New-Item -ItemType Directory -Force -Path $dataDest | Out-Null
 
+          Copy-Item "WorshipHelperVSTO\data\verses.sqlite" $dataDest -Force
+          Write-Host ("verses.sqlite → bin\Release\data ({0:N1} MB)" -f ((Get-Item (Join-Path $dataDest verses.sqlite)).Length / 1MB))
+
+          New-Item -ItemType Directory -Force -Path (Join-Path $dataDest "Bibles")    | Out-Null
+          New-Item -ItemType Directory -Force -Path (Join-Path $dataDest "Templates") | Out-Null
+          Copy-Item "WorshipHelperVSTO\data\Bibles\*.xmm"     (Join-Path $dataDest "Bibles")    -Force
+          Copy-Item "WorshipHelperVSTO\data\Templates\*.pptx"  (Join-Path $dataDest "Templates") -Force
+
+          $pyDest = Join-Path $releaseDir "stt-server"
+          New-Item -ItemType Directory -Force -Path $pyDest | Out-Null
+          Copy-Item "python_server\*.py"            $pyDest -Force
+          Copy-Item "python_server\requirements.txt" $pyDest -Force
+
+          @'
+@echo off
+REM ───────────────────────────────────────────────────────────
+REM  WorshipHelper STT sidecar launcher
+REM  First run: creates .venv and installs faster-whisper etc.
+REM  Subsequent runs: just activates venv and starts server.
+REM ───────────────────────────────────────────────────────────
+setlocal
+pushd "%~dp0"
+if not exist .venv (
+    echo [WorshipHelper] First-time setup — creating Python venv...
+    python -m venv .venv || goto :err
+    call .venv\Scripts\activate.bat
+    python -m pip install --upgrade pip
+    pip install -r requirements.txt || goto :err
+) else (
+    call .venv\Scripts\activate.bat
+)
+echo [WorshipHelper] Starting STT server on ws://127.0.0.1:8765 ...
+python server.py --model large-v3 --device auto
+goto :eof
+:err
+echo [WorshipHelper] Setup failed. See log above.
+pause
+exit /b 1
+'@ | Set-Content -Encoding ASCII (Join-Path $pyDest "start-stt-server.bat")
+
+          Write-Host "Staged contents:"
+          Get-ChildItem $releaseDir -Recurse -File | Select-Object FullName, Length | Format-Table -AutoSize
+
+      # ═════════════════════════════════════════════════════════════════
+      # 8. Publish VSTO (signed manifests)
+      # ═════════════════════════════════════════════════════════════════
       - name: Publish VSTO (With Signing)
         run: |
           msbuild WorshipHelperVSTO\WorshipHelperVSTO.csproj `
@@ -164,9 +262,13 @@ jobs:
             /p:ManifestCertificatePassword=build123 `
             /p:NAudioCoreHintPath="$env:NAUDIO_CORE_PATH" `
             /p:NAudioWinMMHintPath="$env:NAUDIO_WINMM_PATH" `
-            /p:VoskHintPath="$env:VOSK_PATH" `
+            /p:SQLiteHintPath="$env:SQLITE_PATH" `
+            /p:NewtonsoftJsonHintPath="$env:NEWTONSOFT_PATH" `
             /verbosity:normal
 
+      # ═════════════════════════════════════════════════════════════════
+      # 9. WiX — harvest Python sidecar folder
+      # ═════════════════════════════════════════════════════════════════
       - name: Remove VSTO project reference from WiX project
         run: |
           $wixproj = "WorshipHelperSetup\WorshipHelperSetup.wixproj"
@@ -177,16 +279,17 @@ jobs:
           foreach ($ref in $refs) { $ref.ParentNode.RemoveChild($ref) | Out-Null }
           $xml.Save((Resolve-Path $wixproj))
 
-      - name: Harvest Vosk model into WiX fragment
+      - name: Harvest Python sidecar into WiX fragment
         run: |
-          $heatExe  = Get-ChildItem "$env:WIX\bin" -Filter "heat.exe" | Select-Object -First 1 -ExpandProperty FullName
-          $modelDir = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\bin\Release\data\vosk-model"
-          $outFile  = "$env:GITHUB_WORKSPACE\WorshipHelperSetup\VoskModel.wxs"
+          $heatExe = Get-ChildItem "$env:WIX\bin" -Filter "heat.exe" | Select-Object -First 1 -ExpandProperty FullName
+          $sttDir  = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\bin\Release\stt-server"
+          $outFile = "$env:GITHUB_WORKSPACE\WorshipHelperSetup\SttServerFiles.wxs"
 
-          & $heatExe dir $modelDir -nologo -sfrag -srd -sreg -gg -cg VoskModelFiles -dr VOSK_MODEL_DIR -out $outFile
+          & $heatExe dir $sttDir -nologo -sfrag -srd -sreg -gg `
+            -cg SttServerFiles -dr STT_SERVER_DIR -out $outFile
 
           $raw = Get-Content $outFile -Raw
-          $raw = $raw.Replace('SourceDir\', "$modelDir\")
+          $raw = $raw.Replace('SourceDir\', "$sttDir\")
           Set-Content $outFile $raw -Encoding UTF8
 
           $wixproj = "WorshipHelperSetup\WorshipHelperSetup.wixproj"
@@ -195,10 +298,16 @@ jobs:
           $ns.AddNamespace("ms", "http://schemas.microsoft.com/developer/msbuild/2003")
           $ig = $xml.SelectSingleNode("//ms:ItemGroup[ms:Compile]", $ns)
           $el = $xml.CreateElement("Compile", "http://schemas.microsoft.com/developer/msbuild/2003")
-          $el.SetAttribute("Include", "VoskModel.wxs")
+          $el.SetAttribute("Include", "SttServerFiles.wxs")
           $ig.AppendChild($el) | Out-Null
           $xml.Save((Resolve-Path $wixproj))
 
+          Write-Host "Harvested stt-server folder:"
+          Get-ChildItem $sttDir -Recurse -File | Select-Object Name, Length | Format-Table
+
+      # ═════════════════════════════════════════════════════════════════
+      # 10. Build MSI
+      # ═════════════════════════════════════════════════════════════════
       - name: Build MSI
         run: |
           $targetDir = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\bin\Release\"
@@ -208,8 +317,20 @@ jobs:
             /p:DefineConstants="WorshipHelperVSTO.TargetDir=$targetDir" `
             /verbosity:normal
 
+      # ═════════════════════════════════════════════════════════════════
+      # 11. Artifacts
+      # ═════════════════════════════════════════════════════════════════
       - name: Upload MSI artifact
         uses: actions/upload-artifact@v4
         with:
           name: WorshipHelperSetup
           path: WorshipHelperSetup\bin\Release\**\WorshipHelperSetup.msi
+
+      - name: Upload Python sidecar (standalone zip, for manual install)
+        uses: actions/upload-artifact@v4
+        with:
+          name: WorshipHelper-STT-Server
+          path: |
+            python_server\**\*.py
+            python_server\requirements.txt
+            WorshipHelperVSTO\bin\Release\stt-server\start-stt-server.bat
