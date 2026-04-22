@@ -38,57 +38,83 @@ jobs:
       # ═════════════════════════════════════════════════════════════════
       # 2. Resolve managed assembly paths (Vosk → SQLite + Json.NET)
       # ═════════════════════════════════════════════════════════════════
+      - name: Dump packages layout (debug)
+        run: |
+          $packagesDir = "$env:GITHUB_WORKSPACE\packages"
+          Write-Host "=== packages dir contents ==="
+          if (Test-Path $packagesDir) {
+            Get-ChildItem $packagesDir -Recurse -File |
+              Select-Object -ExpandProperty FullName |
+              ForEach-Object { $_.Replace($packagesDir, '') }
+          } else {
+            Write-Host "packages dir does not exist at: $packagesDir"
+          }
+
       - name: Resolve assembly HintPaths
         run: |
           $packagesDir = "$env:GITHUB_WORKSPACE\packages"
 
-          $naudioCore = Get-ChildItem "$packagesDir\NAudio.Core.*\lib" -Recurse -Filter "NAudio.Core.dll" |
-            Sort-Object { $_.FullName } | Select-Object -Last 1
-          $naudioWinMM = Get-ChildItem "$packagesDir\NAudio.WinMM.*\lib" -Recurse -Filter "NAudio.WinMM.dll" |
-            Sort-Object { $_.FullName } | Select-Object -Last 1
+          # ── NAudio ────────────────────────────────────────────────────
+          $naudioCore = Get-ChildItem $packagesDir -Recurse -Filter "NAudio.Core.dll" -ErrorAction SilentlyContinue |
+            Sort-Object FullName | Select-Object -Last 1
+          $naudioWinMM = Get-ChildItem $packagesDir -Recurse -Filter "NAudio.WinMM.dll" -ErrorAction SilentlyContinue |
+            Sort-Object FullName | Select-Object -Last 1
 
-          # SQLite managed DLL — prefer net46 build for .NET Framework 4.7.2
-          $sqlite = Get-ChildItem "$packagesDir\System.Data.SQLite.Core.*\lib\net46" -Recurse -Filter "System.Data.SQLite.dll" |
-            Sort-Object { $_.FullName } | Select-Object -Last 1
-          if (-not $sqlite) {
-            $sqlite = Get-ChildItem "$packagesDir\System.Data.SQLite.Core.*\lib" -Recurse -Filter "System.Data.SQLite.dll" |
-              Sort-Object { $_.FullName } | Select-Object -Last 1
-          }
+          # ── System.Data.SQLite (managed) ──────────────────────────────
+          # Prefer a TFM folder that targets net4x; exclude the native
+          # interop DLL which shares the same name pattern in some packages.
+          $sqlite = Get-ChildItem $packagesDir -Recurse -Filter "System.Data.SQLite.dll" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -notlike "*\x64\*" -and $_.FullName -notlike "*\x86\*" } |
+            Sort-Object {
+              # Rank net46 highest, then any net4x, then anything else
+              if ($_.FullName -like "*net46*") { 0 }
+              elseif ($_.FullName -like "*net4*") { 1 }
+              else { 2 }
+            }, FullName |
+            Select-Object -First 1
 
-          # SQLite native interop — x86 because the MSI is x86
-          $sqliteInterop = Get-ChildItem "$packagesDir\System.Data.SQLite.Core.*\build\net46\x86" -Recurse -Filter "SQLite.Interop.dll" -ErrorAction SilentlyContinue |
-            Sort-Object { $_.FullName } | Select-Object -Last 1
+          # ── SQLite.Interop.dll (native x86) ───────────────────────────
+          $sqliteInterop = Get-ChildItem $packagesDir -Recurse -Filter "SQLite.Interop.dll" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -like "*\x86\*" } |
+            Sort-Object FullName | Select-Object -Last 1
+          # Fallback: any SQLite.Interop.dll if no x86-tagged path found
           if (-not $sqliteInterop) {
-            $sqliteInterop = Get-ChildItem "$packagesDir\System.Data.SQLite.Core.*" -Recurse -Filter "SQLite.Interop.dll" |
-              Where-Object { $_.FullName -like "*x86*" } |
-              Sort-Object { $_.FullName } | Select-Object -Last 1
+            $sqliteInterop = Get-ChildItem $packagesDir -Recurse -Filter "SQLite.Interop.dll" -ErrorAction SilentlyContinue |
+              Sort-Object FullName | Select-Object -Last 1
           }
 
-          $newtonsoft = Get-ChildItem "$packagesDir\Newtonsoft.Json.*\lib\net45" -Recurse -Filter "Newtonsoft.Json.dll" |
-            Sort-Object { $_.FullName } | Select-Object -Last 1
-          if (-not $newtonsoft) {
-            $newtonsoft = Get-ChildItem "$packagesDir\Newtonsoft.Json.*\lib" -Recurse -Filter "Newtonsoft.Json.dll" |
-              Sort-Object { $_.FullName } | Select-Object -Last 1
+          # ── Newtonsoft.Json ───────────────────────────────────────────
+          $newtonsoft = Get-ChildItem $packagesDir -Recurse -Filter "Newtonsoft.Json.dll" -ErrorAction SilentlyContinue |
+            Sort-Object {
+              if ($_.FullName -like "*net45*") { 0 }
+              elseif ($_.FullName -like "*net4*") { 1 }
+              else { 2 }
+            }, FullName |
+            Select-Object -First 1
+
+          # ── Validation ────────────────────────────────────────────────
+          $missing = @()
+          if (-not $naudioCore)    { $missing += "NAudio.Core.dll" }
+          if (-not $naudioWinMM)   { $missing += "NAudio.WinMM.dll" }
+          if (-not $sqlite)        { $missing += "System.Data.SQLite.dll" }
+          if (-not $sqliteInterop) { $missing += "SQLite.Interop.dll" }
+          if (-not $newtonsoft)    { $missing += "Newtonsoft.Json.dll" }
+          if ($missing.Count -gt 0) {
+            throw "Could not find the following assemblies in $packagesDir — check NuGet restore:`n  $($missing -join ', ')"
           }
 
-          if (-not $naudioCore)    { throw "NAudio.Core.dll not found" }
-          if (-not $naudioWinMM)   { throw "NAudio.WinMM.dll not found" }
-          if (-not $sqlite)        { throw "System.Data.SQLite.dll not found" }
-          if (-not $sqliteInterop) { throw "SQLite.Interop.dll (x86) not found" }
-          if (-not $newtonsoft)    { throw "Newtonsoft.Json.dll not found" }
-
-          echo "NAUDIO_CORE_PATH=$($naudioCore.FullName)"      >> $env:GITHUB_ENV
-          echo "NAUDIO_WINMM_PATH=$($naudioWinMM.FullName)"    >> $env:GITHUB_ENV
-          echo "SQLITE_PATH=$($sqlite.FullName)"               >> $env:GITHUB_ENV
+          echo "NAUDIO_CORE_PATH=$($naudioCore.FullName)"       >> $env:GITHUB_ENV
+          echo "NAUDIO_WINMM_PATH=$($naudioWinMM.FullName)"     >> $env:GITHUB_ENV
+          echo "SQLITE_PATH=$($sqlite.FullName)"                >> $env:GITHUB_ENV
           echo "SQLITE_INTEROP_PATH=$($sqliteInterop.FullName)" >> $env:GITHUB_ENV
-          echo "NEWTONSOFT_PATH=$($newtonsoft.FullName)"       >> $env:GITHUB_ENV
+          echo "NEWTONSOFT_PATH=$($newtonsoft.FullName)"        >> $env:GITHUB_ENV
 
           Write-Host "Resolved assemblies:"
-          Write-Host "  NAudio.Core       → $($naudioCore.FullName)"
-          Write-Host "  NAudio.WinMM      → $($naudioWinMM.FullName)"
-          Write-Host "  System.Data.SQLite→ $($sqlite.FullName)"
-          Write-Host "  SQLite.Interop    → $($sqliteInterop.FullName)"
-          Write-Host "  Newtonsoft.Json   → $($newtonsoft.FullName)"
+          Write-Host "  NAudio.Core        -> $($naudioCore.FullName)"
+          Write-Host "  NAudio.WinMM       -> $($naudioWinMM.FullName)"
+          Write-Host "  System.Data.SQLite -> $($sqlite.FullName)"
+          Write-Host "  SQLite.Interop     -> $($sqliteInterop.FullName)"
+          Write-Host "  Newtonsoft.Json    -> $($newtonsoft.FullName)"
 
       # ═════════════════════════════════════════════════════════════════
       # 3. Build verses.sqlite — one-shot embedding job
