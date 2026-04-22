@@ -216,32 +216,31 @@ jobs:
           Copy-Item "python_server\*.py"            $pyDest -Force
           Copy-Item "python_server\requirements.txt" $pyDest -Force
 
-          @'
-@echo off
-REM ───────────────────────────────────────────────────────────
-REM  WorshipHelper STT sidecar launcher
-REM  First run: creates .venv and installs faster-whisper etc.
-REM  Subsequent runs: just activates venv and starts server.
-REM ───────────────────────────────────────────────────────────
-setlocal
-pushd "%~dp0"
-if not exist .venv (
-    echo [WorshipHelper] First-time setup — creating Python venv...
-    python -m venv .venv || goto :err
-    call .venv\Scripts\activate.bat
-    python -m pip install --upgrade pip
-    pip install -r requirements.txt || goto :err
-) else (
-    call .venv\Scripts\activate.bat
-)
-echo [WorshipHelper] Starting STT server on ws://127.0.0.1:8765 ...
-python server.py --model large-v3 --device auto
-goto :eof
-:err
-echo [WorshipHelper] Setup failed. See log above.
-pause
-exit /b 1
-'@ | Set-Content -Encoding ASCII (Join-Path $pyDest "start-stt-server.bat")
+          $batLines = @(
+            '@echo off',
+            'REM WorshipHelper STT sidecar launcher',
+            'REM First run: creates .venv and installs faster-whisper etc.',
+            'REM Subsequent runs: just activates venv and starts server.',
+            'setlocal',
+            'pushd "%~dp0"',
+            'if not exist .venv (',
+            '    echo [WorshipHelper] First-time setup -- creating Python venv...',
+            '    python -m venv .venv || goto :err',
+            '    call .venv\Scripts\activate.bat',
+            '    python -m pip install --upgrade pip',
+            '    pip install -r requirements.txt || goto :err',
+            ') else (',
+            '    call .venv\Scripts\activate.bat',
+            ')',
+            'echo [WorshipHelper] Starting STT server on ws://127.0.0.1:8765 ...',
+            'python server.py --model large-v3 --device auto',
+            'goto :eof',
+            ':err',
+            'echo [WorshipHelper] Setup failed. See log above.',
+            'pause',
+            'exit /b 1'
+          )
+          $batLines | Set-Content -Encoding ASCII (Join-Path $pyDest "start-stt-server.bat")
 
           Write-Host "Staged contents:"
           Get-ChildItem $releaseDir -Recurse -File | Select-Object FullName, Length | Format-Table -AutoSize
