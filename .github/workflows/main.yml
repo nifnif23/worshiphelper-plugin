@@ -35,78 +35,56 @@ jobs:
       - name: Restore NuGet packages
         run: nuget restore WorshipHelper.sln
 
-      - name: Extract System.Data.SQLite (nuget restore skips native packages)
-        run: |
-          $packagesDir = "$env:GITHUB_WORKSPACE\packages"
-          $sqlitePkgDir = Get-ChildItem $packagesDir -Filter "System.Data.SQLite.Core.*" -Directory |
-            Sort-Object Name | Select-Object -Last 1
-          if (-not $sqlitePkgDir) {
-            Write-Host "SQLite package dir not found -- running nuget install to fetch it."
-            nuget install System.Data.SQLite.Core -OutputDirectory $packagesDir -NonInteractive
-            $sqlitePkgDir = Get-ChildItem $packagesDir -Filter "System.Data.SQLite.Core.*" -Directory |
-              Sort-Object Name | Select-Object -Last 1
-          }
-          if (Test-Path (Join-Path $sqlitePkgDir.FullName "lib")) {
-            Write-Host "SQLite already extracted at $($sqlitePkgDir.FullName)"
-          } else {
-            $nupkg = Get-ChildItem $sqlitePkgDir.FullName -Filter "*.nupkg" | Select-Object -First 1
-            Write-Host "Extracting $($nupkg.FullName) ..."
-            Expand-Archive -Path $nupkg.FullName -DestinationPath $sqlitePkgDir.FullName -Force
-            Write-Host "Extracted contents:"
-            Get-ChildItem $sqlitePkgDir.FullName -Recurse -File |
-              Select-Object -ExpandProperty FullName |
-              ForEach-Object { $_.Replace($sqlitePkgDir.FullName, '') }
-          }
+      # ═════════════════════════════════════════════════════════════════
+      # 2. Resolve managed assembly paths
+      # ═════════════════════════════════════════════════════════════════
 
-      # ═════════════════════════════════════════════════════════════════
-      # 2. Resolve managed assembly paths (Vosk → SQLite + Json.NET)
-      # ═════════════════════════════════════════════════════════════════
-      - name: Dump packages layout (debug)
+      - name: Install System.Data.SQLite into isolated directory
+        # nuget restore only downloads the .nupkg for packages.config projects
+        # when the package is not directly listed. We force a full extraction
+        # by running nuget install into a dedicated folder we fully control.
         run: |
-          $packagesDir = "$env:GITHUB_WORKSPACE\packages"
-          Write-Host "=== packages dir contents ==="
-          if (Test-Path $packagesDir) {
-            Get-ChildItem $packagesDir -Recurse -File |
-              Select-Object -ExpandProperty FullName |
-              ForEach-Object { $_.Replace($packagesDir, '') }
-          } else {
-            Write-Host "packages dir does not exist at: $packagesDir"
-          }
+          $sqliteDir = "$env:GITHUB_WORKSPACE\sqlite-install"
+          Write-Host "Installing System.Data.SQLite.Core into $sqliteDir ..."
+          nuget install System.Data.SQLite.Core -OutputDirectory $sqliteDir -NonInteractive
+          Write-Host "Contents:"
+          Get-ChildItem $sqliteDir -Recurse -File |
+            Select-Object -ExpandProperty FullName |
+            ForEach-Object { $_.Replace($sqliteDir, '') }
+          echo "SQLITE_INSTALL_DIR=$sqliteDir" >> $env:GITHUB_ENV
 
       - name: Resolve assembly HintPaths
         run: |
-          $packagesDir = "$env:GITHUB_WORKSPACE\packages"
+          $packagesDir   = "$env:GITHUB_WORKSPACE\packages"
+          $sqliteDir     = "$env:SQLITE_INSTALL_DIR"
 
-          # ── NAudio ────────────────────────────────────────────────────
+          # ── NAudio (from nuget restore packages\) ─────────────────────
           $naudioCore = Get-ChildItem $packagesDir -Recurse -Filter "NAudio.Core.dll" -ErrorAction SilentlyContinue |
             Sort-Object FullName | Select-Object -Last 1
           $naudioWinMM = Get-ChildItem $packagesDir -Recurse -Filter "NAudio.WinMM.dll" -ErrorAction SilentlyContinue |
             Sort-Object FullName | Select-Object -Last 1
 
-          # ── System.Data.SQLite (managed) ──────────────────────────────
-          # Prefer a TFM folder that targets net4x; exclude the native
-          # interop DLL which shares the same name pattern in some packages.
-          $sqlite = Get-ChildItem $packagesDir -Recurse -Filter "System.Data.SQLite.dll" -ErrorAction SilentlyContinue |
+          # ── System.Data.SQLite managed DLL (from isolated install) ─────
+          $sqlite = Get-ChildItem $sqliteDir -Recurse -Filter "System.Data.SQLite.dll" -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName -notlike "*\x64\*" -and $_.FullName -notlike "*\x86\*" } |
             Sort-Object {
-              # Rank net46 highest, then any net4x, then anything else
               if ($_.FullName -like "*net46*") { 0 }
               elseif ($_.FullName -like "*net4*") { 1 }
               else { 2 }
             }, FullName |
             Select-Object -First 1
 
-          # ── SQLite.Interop.dll (native x86) ───────────────────────────
-          $sqliteInterop = Get-ChildItem $packagesDir -Recurse -Filter "SQLite.Interop.dll" -ErrorAction SilentlyContinue |
+          # ── SQLite.Interop.dll native x86 (from isolated install) ──────
+          $sqliteInterop = Get-ChildItem $sqliteDir -Recurse -Filter "SQLite.Interop.dll" -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName -like "*\x86\*" } |
             Sort-Object FullName | Select-Object -Last 1
-          # Fallback: any SQLite.Interop.dll if no x86-tagged path found
           if (-not $sqliteInterop) {
-            $sqliteInterop = Get-ChildItem $packagesDir -Recurse -Filter "SQLite.Interop.dll" -ErrorAction SilentlyContinue |
+            # fallback: any SQLite.Interop.dll
+            $sqliteInterop = Get-ChildItem $sqliteDir -Recurse -Filter "SQLite.Interop.dll" -ErrorAction SilentlyContinue |
               Sort-Object FullName | Select-Object -Last 1
           }
 
-          # ── Newtonsoft.Json ───────────────────────────────────────────
+          # ── Newtonsoft.Json (from nuget restore packages\) ─────────────
           $newtonsoft = Get-ChildItem $packagesDir -Recurse -Filter "Newtonsoft.Json.dll" -ErrorAction SilentlyContinue |
             Sort-Object {
               if ($_.FullName -like "*net45*") { 0 }
@@ -123,7 +101,7 @@ jobs:
           if (-not $sqliteInterop) { $missing += "SQLite.Interop.dll" }
           if (-not $newtonsoft)    { $missing += "Newtonsoft.Json.dll" }
           if ($missing.Count -gt 0) {
-            throw "Could not find the following assemblies in $packagesDir — check NuGet restore:`n  $($missing -join ', ')"
+            throw "Could not find: $($missing -join ', '). Check step logs above."
           }
 
           echo "NAUDIO_CORE_PATH=$($naudioCore.FullName)"       >> $env:GITHUB_ENV
