@@ -1,11 +1,14 @@
 # Core STT
-faster-whisper>=1.1.0
+faster-whisper>=1.0.3
 # Transport
-websockets==12.0
+websockets>=12.0,<14.0
+# Silero VAD runs on torch; CPU wheel is fine (~80MB).
+# Pinned to a version known to work with torch.hub.load(silero-vad).
+torch>=2.2,<3.0
 # Semantic search
-sentence-transformers==3.0.1
-numpy>=2.0
-# Lightweight vector store
-faiss-cpu==1.8.0 ; platform_system != "Windows" or python_version < "3.12"
-# Server plumbing
+sentence-transformers>=3.0.0
+numpy>=1.26,<3.0
+# Optional companion HTTP server for /embed
+aiohttp>=3.9,<4.0
+# Server plumbing (Linux/mac only -- harmless on Windows via marker)
 uvloop==0.19.0 ; platform_system != "Windows"

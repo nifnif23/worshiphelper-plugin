@@ -1,0 +1,24 @@
+Add these <Compile Include=...> entries to WorshipHelperVSTO.csproj
+inside the existing ItemGroup that lists Compile entries.
+(If you already have Detection/ files, just add the HallucinationGuard line.)
+
+    <!-- v5 additions -->
+    <Compile Include="Detection\HallucinationGuard.cs" />
+
+No new NuGet packages are required. Everything uses what's already there:
+  * NAudio (microphone)
+  * Newtonsoft.Json (websocket messages)
+  * System.Data.SQLite (feedback + verse DB)
+  * log4net (logging)
+
+If you want the older files to be overwritten cleanly:
+  REPLACE these files with the v5 versions:
+    Audio/Chunker.cs
+    Networking/PythonClient.cs
+    SpeechListener.cs
+    SpeechToScriptureService.cs      <-- (patched version in this bundle)
+
+  ADD this new file:
+    Detection/HallucinationGuard.cs
+
+No other source files need to change.

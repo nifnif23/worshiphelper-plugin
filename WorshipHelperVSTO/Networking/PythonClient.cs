@@ -1,16 +1,15 @@
 // ============================================================================
-// Networking/PythonClient.cs
-// WebSocket client for the Faster-Whisper Python sidecar.
+// Networking/PythonClient.cs  --  v5
 //
-// Responsibilities:
-//   * Connect to ws://127.0.0.1:8765/stt
-//   * Stream binary PCM chunks as they arrive from Chunker
-//   * Parse transcript messages and raise TranscriptReceived
-//   * Auto-reconnect with capped exponential backoff
-//   * Graceful shutdown (Close handshake + cancellation)
-//
-// Uses System.Net.WebSockets.ClientWebSocket -- available in .NET Framework
-// 4.7.2 out of the box, no extra NuGet dependencies.
+// New in v5:
+//   * Parses the richer transcript payload (avg_logprob, compression_ratio,
+//     no_speech_prob, duration) so the C# detection pipeline can use them
+//     as additional trust signals.
+//   * "dropped" message type -- the server tells us when it guard-railed a
+//     segment, so the debug panel can show "mic is live, but Whisper
+//     threw away: Thanks for watching".
+//   * SendHotwordsAsync() -- optional per-session bias (book names).
+//   * Heartbeat: sends ping every 15s, surfaces latency for diagnostics.
 // ============================================================================
 using System;
 using System.Net.WebSockets;
@@ -26,33 +25,50 @@ namespace WorshipHelperVSTO.Networking
     public sealed class TranscriptEventArgs : EventArgs
     {
         public string Text { get; set; }
-        public float Confidence { get; set; }
-        public bool IsFinal { get; set; }
+        public float  Confidence { get; set; }
+        public bool   IsFinal { get; set; }
         public double DurationSeconds { get; set; }
+        public double AvgLogProb { get; set; }
+        public double CompressionRatio { get; set; }
+        public double NoSpeechProb { get; set; }
+    }
+
+    public sealed class DroppedSegmentEventArgs : EventArgs
+    {
+        public string Reason { get; set; }
+        public string Text { get; set; }
+        public double Duration { get; set; }
+        public double PeakRms { get; set; }
     }
 
     public sealed class PythonClient : IDisposable
     {
         private static readonly ILog log = LogManager.GetLogger(typeof(PythonClient));
 
-        public Uri ServerUri { get; set; } = new Uri("ws://127.0.0.1:8765/stt");
+        public Uri ServerUri { get; set; } = new Uri("ws://127.0.0.1:8765/");
         public TimeSpan InitialRetryDelay { get; set; } = TimeSpan.FromSeconds(1);
         public TimeSpan MaxRetryDelay     { get; set; } = TimeSpan.FromSeconds(15);
+        public TimeSpan PingInterval      { get; set; } = TimeSpan.FromSeconds(15);
 
-        public event EventHandler<TranscriptEventArgs> TranscriptReceived;
-        public event EventHandler<string> StatusReceived;
-        public event EventHandler<Exception> ConnectionError;
-        public event EventHandler Connected;
-        public event EventHandler Disconnected;
+        public event EventHandler<TranscriptEventArgs>      TranscriptReceived;
+        public event EventHandler<DroppedSegmentEventArgs>  SegmentDropped;
+        public event EventHandler<string>                   StatusReceived;
+        public event EventHandler<Exception>                ConnectionError;
+        public event EventHandler                           Connected;
+        public event EventHandler                           Disconnected;
 
         private ClientWebSocket _ws;
         private CancellationTokenSource _cts;
         private Task _rxTask;
+        private Task _pingTask;
         private readonly SemaphoreSlim _sendLock = new SemaphoreSlim(1, 1);
         private bool _disposed;
 
         public bool IsConnected =>
             _ws != null && _ws.State == WebSocketState.Open;
+
+        /// <summary>Last round-trip latency in ms (from ping/pong). 0 if unknown.</summary>
+        public int LastPingMs { get; private set; }
 
         // ---------------------------------------------------------------
         public void Start()
@@ -62,15 +78,18 @@ namespace WorshipHelperVSTO.Networking
 
             _cts = new CancellationTokenSource();
             _rxTask = Task.Run(() => RunAsync(_cts.Token));
+            _pingTask = Task.Run(() => PingLoopAsync(_cts.Token));
         }
 
         public async Task StopAsync()
         {
             if (_cts == null) return;
             _cts.Cancel();
-            try { await _rxTask.ConfigureAwait(false); }
+            try { await Task.WhenAll(_rxTask ?? Task.CompletedTask,
+                                     _pingTask ?? Task.CompletedTask)
+                                .ConfigureAwait(false); }
             catch { /* swallow */ }
-            _cts.Dispose(); _cts = null; _rxTask = null;
+            _cts.Dispose(); _cts = null; _rxTask = null; _pingTask = null;
         }
 
         // ---------------------------------------------------------------
@@ -88,15 +107,22 @@ namespace WorshipHelperVSTO.Networking
             }
             catch (Exception ex)
             {
-                log.Warn("PythonClient: send failed: " + ex.Message);
+                log.Debug("PythonClient: send failed: " + ex.Message);
             }
             finally { _sendLock.Release(); }
         }
 
-        public Task SendFlushAsync() => SendControlAsync("{\"type\":\"flush\"}");
-        public Task SendResetAsync() => SendControlAsync("{\"type\":\"reset\"}");
+        public Task SendFlushAsync() => SendJsonAsync("{\"type\":\"flush\"}");
+        public Task SendResetAsync() => SendJsonAsync("{\"type\":\"reset\"}");
 
-        private async Task SendControlAsync(string json)
+        public async Task SendHotwordsAsync(string[] words)
+        {
+            if (words == null || words.Length == 0) return;
+            var payload = JsonConvert.SerializeObject(new { type = "hotwords", words });
+            await SendJsonAsync(payload).ConfigureAwait(false);
+        }
+
+        private async Task SendJsonAsync(string json)
         {
             if (!IsConnected) return;
             await _sendLock.WaitAsync().ConfigureAwait(false);
@@ -107,7 +133,7 @@ namespace WorshipHelperVSTO.Networking
                     new ArraySegment<byte>(bytes),
                     WebSocketMessageType.Text, true, _cts.Token).ConfigureAwait(false);
             }
-            catch (Exception ex) { log.Warn("PythonClient: control send failed: " + ex.Message); }
+            catch (Exception ex) { log.Debug("PythonClient: json send failed: " + ex.Message); }
             finally { _sendLock.Release(); }
         }
 
@@ -132,7 +158,7 @@ namespace WorshipHelperVSTO.Networking
                 catch (OperationCanceledException) { break; }
                 catch (Exception ex)
                 {
-                    log.Warn("PythonClient: connection error: " + ex.Message);
+                    log.Debug("PythonClient: connection error: " + ex.Message);
                     ConnectionError?.Invoke(this, ex);
                 }
                 finally
@@ -143,13 +169,32 @@ namespace WorshipHelperVSTO.Networking
                 }
 
                 if (token.IsCancellationRequested) break;
-                log.Info($"PythonClient: reconnecting in {delay.TotalSeconds:F0}s...");
+                log.Debug($"PythonClient: reconnecting in {delay.TotalSeconds:F0}s...");
                 try { await Task.Delay(delay, token).ConfigureAwait(false); }
                 catch { break; }
                 delay = TimeSpan.FromSeconds(Math.Min(
                     MaxRetryDelay.TotalSeconds, delay.TotalSeconds * 2));
             }
         }
+
+        private async Task PingLoopAsync(CancellationToken token)
+        {
+            while (!token.IsCancellationRequested)
+            {
+                try
+                {
+                    await Task.Delay(PingInterval, token).ConfigureAwait(false);
+                    if (IsConnected)
+                    {
+                        _pingSentUtc = DateTime.UtcNow;
+                        await SendJsonAsync("{\"type\":\"ping\"}").ConfigureAwait(false);
+                    }
+                }
+                catch (OperationCanceledException) { break; }
+                catch (Exception ex) { log.Debug("ping loop: " + ex.Message); }
+            }
+        }
+        private DateTime _pingSentUtc;
 
         private async Task ReceiveLoopAsync(CancellationToken token)
         {
@@ -180,7 +225,7 @@ namespace WorshipHelperVSTO.Networking
                 string json = sb.ToString();
                 sb.Clear();
                 try { HandleServerMessage(json); }
-                catch (Exception ex) { log.Warn("PythonClient: bad msg: " + ex.Message); }
+                catch (Exception ex) { log.Debug("PythonClient: bad msg: " + ex.Message); }
             }
         }
 
@@ -193,15 +238,35 @@ namespace WorshipHelperVSTO.Networking
                 case "transcript":
                     TranscriptReceived?.Invoke(this, new TranscriptEventArgs
                     {
-                        Text = (string)obj["text"] ?? "",
-                        Confidence = (float?)obj["confidence"] ?? 0.0f,
-                        IsFinal = (bool?)obj["final"] ?? true,
-                        DurationSeconds = (double?)obj["duration"] ?? 0,
+                        Text             = (string)obj["text"] ?? "",
+                        Confidence       = (float?) obj["confidence"] ?? 0.0f,
+                        IsFinal          = (bool?)  obj["final"] ?? true,
+                        DurationSeconds  = (double?)obj["duration"] ?? 0,
+                        AvgLogProb       = (double?)obj["avg_logprob"] ?? 0,
+                        CompressionRatio = (double?)obj["compression_ratio"] ?? 0,
+                        NoSpeechProb     = (double?)obj["no_speech_prob"] ?? 0,
                     });
                     break;
+
+                case "dropped":
+                    SegmentDropped?.Invoke(this, new DroppedSegmentEventArgs
+                    {
+                        Reason   = (string)obj["reason"] ?? "",
+                        Text     = (string)obj["text"] ?? "",
+                        Duration = (double?)obj["duration"] ?? 0,
+                        PeakRms  = (double?)obj["peak_rms"] ?? 0,
+                    });
+                    break;
+
                 case "status":
                     StatusReceived?.Invoke(this, (string)obj["message"] ?? "");
                     break;
+
+                case "pong":
+                    if (_pingSentUtc != default)
+                        LastPingMs = (int)(DateTime.UtcNow - _pingSentUtc).TotalMilliseconds;
+                    break;
+
                 case "error":
                     log.Warn("Server error: " + (string)obj["message"]);
                     break;

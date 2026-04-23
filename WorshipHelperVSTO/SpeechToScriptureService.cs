@@ -13,6 +13,7 @@ using System;
 using System.Collections.Generic;
 using System.Timers;
 using log4net;
+using WorshipHelperVSTO.Detection;   // v5: HallucinationGuard
 
 namespace WorshipHelperVSTO
 {
@@ -103,6 +104,11 @@ namespace WorshipHelperVSTO
         private bool _disposed;
         private Bible _validationBible; // cached for reference validation
 
+        // v5: client-side hallucination guard.
+        private readonly HallucinationGuard _guard = new HallucinationGuard();
+        /// <summary>Exposes the hallucination guard so the debug panel can read counters.</summary>
+        public HallucinationGuard Guard => _guard;
+
         // Duplicate suppression
         private readonly Dictionary<string, DateTime> _recentReferences = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
         private readonly object _recentLock = new object();
@@ -162,7 +168,7 @@ namespace WorshipHelperVSTO
         /// This combines the speech engine confidence and the Bible detection confidence.
         /// Range: 0.0 – 1.0.  Default: 0.4
         /// </summary>
-        public double MinCombinedConfidence { get; set; } = 0.4;
+        public double MinCombinedConfidence { get; set; } = 0.55;   // v5: tightened from 0.4
 
         /// <summary>
         /// Minimum speech engine confidence.  Phrases below this are discarded
@@ -233,6 +239,7 @@ namespace WorshipHelperVSTO
         public SpeechToScriptureService()
         {
             _listener = new SpeechListener();
+            _listener.MinEngineConfidence = 0.30f;   // v5: tightened from 0.10
             _listener.SpeechRecognised += OnSpeechRecognised;
             _listener.StatusChanged += OnListenerStatusChanged;
 
@@ -332,6 +339,30 @@ namespace WorshipHelperVSTO
 
                 // Step 1: Run Bible reference detection
                 var detected = BibleReferenceDetector.DetectBest(e.Text);
+
+                // v5: hallucination guard -- catches rapid-fire same-book
+                // loops and low-trust segments before they can hit the
+                // auto-insert pipeline.
+                var guardInput = new GuardInput
+                {
+                    RawText          = e.Text,
+                    Book             = detected?.BookName,
+                    Chapter          = ParseChapterNumber(detected?.ReferenceFragment ?? ""),
+                    Verse            = ParseVerseNumber(detected?.ReferenceFragment ?? ""),
+                    EngineConfidence = e.Confidence,
+                    AvgLogProb       = e.AvgLogProb,
+                    CompressionRatio = e.CompressionRatio,
+                    NoSpeechProb     = e.NoSpeechProb,
+                    DurationSeconds  = e.DurationSeconds,
+                };
+                var decision = _guard.Check(guardInput);
+                if (decision.Verdict == GuardVerdict.Reject)
+                {
+                    log.Info($"Pipeline: guard rejected \"{e.Text}\" -> {decision.Reason}");
+                    return;
+                }
+                if (decision.Verdict == GuardVerdict.Defer)
+                    log.Debug($"Pipeline: guard deferred \"{e.Text}\" -> {decision.Reason}");
 
                 // Step 1a: Chapter-only debounce — if we have a pending
                 // chapter-only reference from a previous utterance, try to
@@ -536,6 +567,18 @@ namespace WorshipHelperVSTO
             int split = refFragment.IndexOfAny(new[] { ':', '-' });
             string chapterPart = split < 0 ? refFragment : refFragment.Substring(0, split);
             return int.TryParse(chapterPart.Trim(), out int n) ? n : 0;
+        }
+
+        /// <summary>v5: extracts the verse portion of a fragment like "3:16-18" -> 16. 0 if chapter-only.</summary>
+        private static int ParseVerseNumber(string refFragment)
+        {
+            if (string.IsNullOrEmpty(refFragment)) return 0;
+            int colon = refFragment.IndexOf(':');
+            if (colon < 0) return 0;
+            string versePart = refFragment.Substring(colon + 1);
+            int dash = versePart.IndexOfAny(new[] { '-', '\u2013' });
+            if (dash >= 0) versePart = versePart.Substring(0, dash);
+            return int.TryParse(versePart.Trim(), out int v) ? v : 0;
         }
 
         /// <summary>
