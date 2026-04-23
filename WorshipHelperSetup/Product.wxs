@@ -11,7 +11,6 @@
 
 		<Feature Id="ProductFeature" Title="WorshipHelper" Level="1">
 			<ComponentGroupRef Id="ProductComponents" />
-			<ComponentGroupRef Id="VoskModelFiles" />
 			<ComponentRef Id="Registry_FriendlyName" />
 			<ComponentRef Id="Registry_Description" />
 			<ComponentRef Id="Registry_Manifest" />
