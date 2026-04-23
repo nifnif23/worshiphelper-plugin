@@ -11,6 +11,7 @@
 
 		<Feature Id="ProductFeature" Title="WorshipHelper" Level="1">
 			<ComponentGroupRef Id="ProductComponents" />
+			<ComponentGroupRef Id="SttServerFiles" />
 			<ComponentRef Id="Registry_FriendlyName" />
 			<ComponentRef Id="Registry_Description" />
 			<ComponentRef Id="Registry_Manifest" />
@@ -40,7 +41,7 @@
 			<Directory Id="ProgramFilesFolder">
 				<Directory Id="INSTALLFOLDER" Name="WorshipHelper">
 					<Directory Id="DATA_DIR" Name="data">
-						<Directory Id="VOSK_MODEL_DIR" Name="vosk-model" />
+						<Directory Id="STT_SERVER_DIR" Name="stt-server" />
 						<Directory Id="TEMPLATES_DIR" Name="Templates" />
 						<Directory Id="BIBLES_DIR" Name="Bibles" />
 					</Directory>
@@ -110,16 +111,6 @@
 					  Name="log4net.dll"
 					  Source="$(var.WorshipHelperVSTO.TargetDir)" />
 			</Component>
-			<Component Id="Vosk_dll_Component">
-				<File Id="Vosk_dll" KeyPath="yes"
-					  Name="Vosk.dll"
-					  Source="$(var.WorshipHelperVSTO.TargetDir)" />
-			</Component>
-			<Component Id="libvosk_dll_Component">
-				<File Id="libvosk_dll" KeyPath="yes"
-					  Name="libvosk.dll"
-					  Source="$(var.WorshipHelperVSTO.TargetDir)" />
-			</Component>
 			<Component Id="NAudioCore_dll_Component">
 				<File Id="NAudioCore_dll" KeyPath="yes"
 					  Name="NAudio.Core.dll"
@@ -128,21 +119,6 @@
 			<Component Id="NAudioWinMM_dll_Component">
 				<File Id="NAudioWinMM_dll" KeyPath="yes"
 					  Name="NAudio.WinMM.dll"
-					  Source="$(var.WorshipHelperVSTO.TargetDir)" />
-			</Component>
-			<Component Id="libgcc_dll_Component">
-				<File Id="libgcc_dll" KeyPath="yes"
-					  Name="libgcc_s_seh-1.dll"
-					  Source="$(var.WorshipHelperVSTO.TargetDir)" />
-			</Component>
-			<Component Id="libstdcpp_dll_Component">
-				<File Id="libstdcpp_dll" KeyPath="yes"
-					  Name="libstdc++-6.dll"
-					  Source="$(var.WorshipHelperVSTO.TargetDir)" />
-			</Component>
-			<Component Id="libwinpthread_dll_Component">
-				<File Id="libwinpthread_dll" KeyPath="yes"
-					  Name="libwinpthread-1.dll"
 					  Source="$(var.WorshipHelperVSTO.TargetDir)" />
 			</Component>
 		</ComponentGroup>
