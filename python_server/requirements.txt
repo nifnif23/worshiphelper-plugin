@@ -1,10 +1,10 @@
 # Core STT
-faster-whisper==1.0.3
+faster-whisper>=1.1.0
 # Transport
 websockets==12.0
 # Semantic search
 sentence-transformers==3.0.1
-numpy==1.26.4
+numpy>=2.0
 # Lightweight vector store
 faiss-cpu==1.8.0 ; platform_system != "Windows" or python_version < "3.12"
 # Server plumbing

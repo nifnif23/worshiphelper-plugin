@@ -62,7 +62,7 @@ namespace WorshipHelperVSTO
         private const int FocusTimeoutMs = 5_000;
 
         // -- Config (kept for source-compat with the old listener) -----------
-        public float MinEngineConfidence { get; set; } = 0.35f;
+        public float MinEngineConfidence { get; set; } = 0.10f;
 
         /// <summary>Override if you run the server on another host/port.</summary>
         public Uri ServerUri

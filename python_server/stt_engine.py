@@ -122,8 +122,8 @@ class FasterWhisperEngine:
                     "John 3:16, First Corinthians 13, Psalm twenty three, "
                     "Genesis chapter one verse one."
                 ),
-                temperature=0.0,
-                no_speech_threshold=0.55,
+                temperature=[0.0, 0.2],
+                no_speech_threshold=0.8,
             )
             out: List[Transcript] = []
             for seg in segments:
@@ -134,4 +134,5 @@ class FasterWhisperEngine:
                     no_speech_prob=seg.no_speech_prob,
                     duration_s=seg.end - seg.start,
                 ))
+            log.info("DEBUG: segments=%d lang=%s", len(out), info.language)
             return out

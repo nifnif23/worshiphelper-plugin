@@ -80,7 +80,7 @@ async def handle_session(ws: WebSocketServerProtocol) -> None:
 
                     segments = await asyncio.to_thread(ENGINE.transcribe, pcm)
                     for seg in segments:
-                        if not seg.text or seg.text == last_sent:
+                        if not seg.text:
                             continue
                         last_sent = seg.text
                         await ws.send(json.dumps({

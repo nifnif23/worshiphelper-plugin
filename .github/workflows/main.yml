@@ -171,6 +171,14 @@ jobs:
           path: WorshipHelperVSTO/data/verses.sqlite
           key: ${{ steps.emb-key.outputs.key }}
 
+      - name: Cache pip packages
+        if: steps.cache-verses.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\pip\Cache
+          key: pip-${{ env.PYTHON_VERSION }}-${{ hashFiles('python_server/requirements.txt') }}
+          restore-keys: pip-${{ env.PYTHON_VERSION }}-
+
       - name: Install Python deps for embedding build
         if: steps.cache-verses.outputs.cache-hit != 'true'
         run: |
