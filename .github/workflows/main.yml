@@ -117,6 +117,42 @@ jobs:
           Write-Host "  SQLite.Interop     -> $($sqliteInterop.FullName)"
           Write-Host "  Newtonsoft.Json    -> $($newtonsoft.FullName)"
 
+      - name: Patch csproj HintPaths with resolved assembly paths
+        # The csproj has hardcoded relative HintPaths (e.g. pointing to net472\
+        # which does not exist, or wrong SQLite version string). We rewrite the
+        # four <HintPath> elements in-place so MSBuild finds the actual DLLs.
+        run: |
+          $csproj = "$env:GITHUB_WORKSPACE\WorshipHelperVSTO\WorshipHelperVSTO.csproj"
+          $xml = [xml](Get-Content $csproj -Raw)
+          $ns = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
+          $ns.AddNamespace("ms", "http://schemas.microsoft.com/developer/msbuild/2003")
+
+          function Set-HintPath($xml, $ns, $includeName, $newPath) {
+            $ref = $xml.SelectSingleNode(
+              "//ms:Reference[starts-with(@Include,'$includeName')]", $ns)
+            if ($ref -eq $null) {
+              Write-Host "WARNING: <Reference Include='$includeName...'> not found in csproj"
+              return
+            }
+            $hp = $ref.SelectSingleNode("ms:HintPath", $ns)
+            if ($hp -eq $null) {
+              $hp = $xml.CreateElement("HintPath",
+                "http://schemas.microsoft.com/developer/msbuild/2003")
+              $ref.AppendChild($hp) | Out-Null
+            }
+            $hp.InnerText = $newPath
+            Write-Host "  $includeName -> $newPath"
+          }
+
+          Write-Host "Patching HintPaths:"
+          Set-HintPath $xml $ns "NAudio.Core"         $env:NAUDIO_CORE_PATH
+          Set-HintPath $xml $ns "NAudio.WinMM"        $env:NAUDIO_WINMM_PATH
+          Set-HintPath $xml $ns "System.Data.SQLite"  $env:SQLITE_PATH
+          Set-HintPath $xml $ns "Newtonsoft.Json"     $env:NEWTONSOFT_PATH
+
+          $xml.Save($csproj)
+          Write-Host "csproj saved."
+
       # ═════════════════════════════════════════════════════════════════
       # 3. Build verses.sqlite — one-shot embedding job
       # ═════════════════════════════════════════════════════════════════
@@ -199,10 +235,6 @@ jobs:
             /p:ManifestCertificateThumbprint="$env:CERT_THUMBPRINT" `
             /p:ManifestKeyFile="$env:PFX_PATH" `
             /p:ManifestCertificatePassword=build123 `
-            /p:NAudioCoreHintPath="$env:NAUDIO_CORE_PATH" `
-            /p:NAudioWinMMHintPath="$env:NAUDIO_WINMM_PATH" `
-            /p:SQLiteHintPath="$env:SQLITE_PATH" `
-            /p:NewtonsoftJsonHintPath="$env:NEWTONSOFT_PATH" `
             /verbosity:minimal
 
       # ═════════════════════════════════════════════════════════════════
@@ -286,10 +318,6 @@ jobs:
             /p:ManifestCertificateThumbprint="$env:CERT_THUMBPRINT" `
             /p:ManifestKeyFile="$env:PFX_PATH" `
             /p:ManifestCertificatePassword=build123 `
-            /p:NAudioCoreHintPath="$env:NAUDIO_CORE_PATH" `
-            /p:NAudioWinMMHintPath="$env:NAUDIO_WINMM_PATH" `
-            /p:SQLiteHintPath="$env:SQLITE_PATH" `
-            /p:NewtonsoftJsonHintPath="$env:NEWTONSOFT_PATH" `
             /verbosity:normal
 
       # ═════════════════════════════════════════════════════════════════
