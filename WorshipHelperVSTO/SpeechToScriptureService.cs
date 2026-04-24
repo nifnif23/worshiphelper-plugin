@@ -11,6 +11,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Media;
 using System.Timers;
 using log4net;
 using WorshipHelperVSTO.Detection;   // v5: HallucinationGuard, GuardInput, GuardVerdict, GuardDecision
@@ -109,6 +110,14 @@ namespace WorshipHelperVSTO
         /// <summary>Exposes the hallucination guard so the debug panel can read counters.</summary>
         public HallucinationGuard Guard => _guard;
 
+        // v5.1: last successfully-fired reference — used for context
+        // carryover so "verse 5" on its own after "John 3:16" still
+        // works. Guarded by _contextLock.
+        private readonly object _contextLock = new object();
+        private string   _lastFiredBook;
+        private int      _lastFiredChapter;
+        private DateTime _lastFiredAtUtc;
+
         // Duplicate suppression
         private readonly Dictionary<string, DateTime> _recentReferences = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
         private readonly object _recentLock = new object();
@@ -158,10 +167,38 @@ namespace WorshipHelperVSTO
         /// and the fuller reference fires instead. If nothing arrives before
         /// the timer elapses, the chapter-only reference is released as-is.
         ///
-        /// Default: 10000ms (10 seconds). Set to 0 to disable debouncing and
-        /// fire chapter-only references immediately (legacy behaviour).
+        /// Default: 4000ms (4 seconds).  v5.1 — tightened from 10 s because
+        /// the old window felt laggy to presenters. The guard's "Defer"
+        /// path compensates: borderline chapter-only detections are already
+        /// held for an additional cycle before release.
+        /// Set to 0 to disable debouncing and fire chapter-only references
+        /// immediately (legacy behaviour).
         /// </summary>
-        public int ChapterOnlyGraceMs { get; set; } = 10_000;
+        public int ChapterOnlyGraceMs { get; set; } = 4_000;
+
+        /// <summary>
+        /// v5.1: How long a recently-fired reference keeps its book+chapter
+        /// as "context" so subsequent fragmentary utterances like "verse 5"
+        /// can be interpreted against it. Windows-of-attention memory —
+        /// mirrors how a congregation member hears scripture in passages,
+        /// not as isolated atoms.
+        ///
+        /// Example:
+        ///   10:00:00   "Let's read John 3:16."   -> fires "John 3:16"
+        ///   10:00:12   "And verse 17 says..."    -> fires "John 3:17"
+        ///   10:00:40   "verse 18"                -> context expired, drops
+        ///
+        /// Default: 30 000 ms (30 s). Set to 0 to disable.
+        /// </summary>
+        public int ContextCarryoverMs { get; set; } = 30_000;
+
+        /// <summary>
+        /// v5.1: Play a quiet system chime when a reference is successfully
+        /// fired. Gives the presenter acoustic feedback without having to
+        /// look at the screen. Off by default to keep the default behaviour
+        /// quiet for existing users.
+        /// </summary>
+        public bool PlayChimeOnInsert { get; set; } = false;
 
         /// <summary>
         /// Minimum combined confidence required for a detection to fire the event.
@@ -281,6 +318,17 @@ namespace WorshipHelperVSTO
             CancelPendingReference();
             _listener.Stop();
 
+            // v5.1: drop guard state and context on session end so the next
+            // session starts clean and doesn't inherit rapid-fire history
+            // from a mic that's been off for an hour.
+            try { _guard.Reset(); } catch { }
+            lock (_contextLock)
+            {
+                _lastFiredBook = null;
+                _lastFiredChapter = 0;
+                _lastFiredAtUtc = DateTime.MinValue;
+            }
+
             RaiseStatus("Speech listening stopped.", isListening: false);
         }
 
@@ -376,6 +424,17 @@ namespace WorshipHelperVSTO
                         // The upgrade path already fired the richer reference.
                         return;
                     }
+                }
+
+                // Step 1b (v5.1): Context carry-over. If this utterance has
+                // no book name but does have a "verse N" phrase, splice it
+                // onto the LAST successfully-fired book+chapter so phrases
+                // like "and verse 17 says..." continue inserting from the
+                // passage the presenter is already on.
+                if (detected == null)
+                {
+                    if (TryUpgradeWithLastFiredContext(e))
+                        return;
                 }
 
                 if (detected == null)
@@ -551,6 +610,114 @@ namespace WorshipHelperVSTO
                 SpokenText          = spokenText,
                 Confidence          = combined,
             });
+
+            // v5.1: remember the book+chapter we just fired so a follow-up
+            // "verse N" alone can carry over without needing to re-hear the
+            // book name. Window configured by ContextCarryoverMs.
+            RememberFiredContext(detected);
+
+            // v5.1: quiet acoustic feedback, opt-in.
+            if (PlayChimeOnInsert)
+            {
+                try { SystemSounds.Asterisk.Play(); }
+                catch { /* audio subsystem glitchy — never fatal */ }
+            }
+        }
+
+        // -----------------------------------------------------------------------
+        // v5.1: last-fired-context carryover
+        // -----------------------------------------------------------------------
+
+        /// <summary>
+        /// Stores the book+chapter of the most-recently fired detection so
+        /// <see cref="TryUpgradeWithLastFiredContext"/> can splice a fragmentary
+        /// follow-up onto it.
+        /// </summary>
+        private void RememberFiredContext(DetectedReference detected)
+        {
+            if (detected == null || string.IsNullOrEmpty(detected.BookName)) return;
+            int ch = ParseChapterNumber(detected.ReferenceFragment);
+            if (ch <= 0) return;
+
+            lock (_contextLock)
+            {
+                _lastFiredBook    = detected.BookName;
+                _lastFiredChapter = ch;
+                _lastFiredAtUtc   = DateTime.UtcNow;
+            }
+        }
+
+        /// <summary>
+        /// If the incoming utterance has no detectable book but the listener
+        /// just fired a reference within <see cref="ContextCarryoverMs"/>,
+        /// splice the new text onto the last book+chapter context so phrases
+        /// like "and verse 17" keep working within the current passage.
+        ///
+        /// Returns true if an upgrade was detected, validated and fired
+        /// (in which case the caller should stop processing).
+        /// </summary>
+        private bool TryUpgradeWithLastFiredContext(SpeechRecognisedEventArgs followUp)
+        {
+            if (ContextCarryoverMs <= 0) return false;
+            if (string.IsNullOrWhiteSpace(followUp?.Text)) return false;
+
+            string lastBook;
+            int    lastChapter;
+            DateTime lastAt;
+            lock (_contextLock)
+            {
+                if (string.IsNullOrEmpty(_lastFiredBook) || _lastFiredChapter <= 0)
+                    return false;
+                if ((DateTime.UtcNow - _lastFiredAtUtc).TotalMilliseconds > ContextCarryoverMs)
+                    return false;
+                lastBook    = _lastFiredBook;
+                lastChapter = _lastFiredChapter;
+                lastAt      = _lastFiredAtUtc;
+            }
+
+            // Quick sanity: the follow-up must plausibly mention a verse.
+            // Otherwise random chatter would keep re-triggering the last ref.
+            string lower = followUp.Text.ToLowerInvariant();
+            if (lower.IndexOf("verse", StringComparison.Ordinal) < 0
+                && !System.Text.RegularExpressions.Regex.IsMatch(lower, @"\b\d{1,3}\b"))
+                return false;
+
+            string spliced = $"{lastBook} chapter {lastChapter} {followUp.Text}";
+            var upgraded = BibleReferenceDetector.DetectBest(spliced);
+            if (upgraded == null) return false;
+            if (upgraded.ReferenceFragment == null || !upgraded.ReferenceFragment.Contains(":"))
+                return false;
+            if (!string.Equals(upgraded.BookName, lastBook, StringComparison.OrdinalIgnoreCase))
+                return false;
+            if (ParseChapterNumber(upgraded.ReferenceFragment) != lastChapter)
+                return false;
+
+            // Validate against a real bible (same as the main pipeline path).
+            Bible vb = null;
+            try { vb = _validationBible ?? (_validationBible = TryLoadValidationBible()); }
+            catch { /* non-fatal */ }
+            if (vb != null)
+            {
+                var validated = ReferenceValidator.Validate(vb, upgraded.BookName, upgraded.ReferenceFragment);
+                if (validated == null) return false;
+                if (validated.Outcome != ValidationOutcome.Valid)
+                {
+                    upgraded = new DetectedReference
+                    {
+                        NormalisedReference = validated.NormalisedReference,
+                        BookName            = validated.BookName,
+                        ReferenceFragment   = validated.ReferenceFragment,
+                        MatchedRawText      = upgraded.MatchedRawText,
+                        Confidence          = upgraded.Confidence,
+                    };
+                }
+            }
+
+            log.Info($"Pipeline: Context-carry \"{followUp.Text}\" + [{lastBook} {lastChapter}] " +
+                     $"→ \"{upgraded.NormalisedReference}\" (ctx age {(DateTime.UtcNow - lastAt).TotalSeconds:F1}s).");
+
+            FireDetection(upgraded, followUp.Text, followUp.Confidence);
+            return true;
         }
 
         // -----------------------------------------------------------------------

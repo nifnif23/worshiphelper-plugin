@@ -1,22 +1,29 @@
 // ============================================================================
-// Detection/HallucinationGuard.cs
+// Detection/HallucinationGuard.cs   —   v5.1  (hardened)
 //
 // Client-side defense-in-depth against Whisper hallucination patterns.
 //
-// The Python server has its own filters (compression-ratio, logprob, dedup,
-// blacklist). This guard catches the subtler stuff only visible once you
-// aggregate detections:
+// The Python server already filters aggressively on its side (compression
+// ratio, logprob, dedup, blacklist). This guard catches the subtler stuff
+// that is only visible once you aggregate a few detections on the client:
 //
 //   1. RAPID-FIRE DIFFERENT CHAPTERS of the same book:
 //        21:08:06  "John 3" "John 4" "John 5" "John 6" ...
-//      Real ministers never race through 6 chapters in 1 second. Flag as
-//      hallucination.
+//      Real ministers never race through six chapters in one second.
+//
+//   1b. RAPID-FIRE DIFFERENT VERSES of the same chapter (NEW in v5.1):
+//        21:08:06  "Psalm 23:1" "Psalm 23:2" "Psalm 23:3" "Psalm 23:4" ...
+//      The verse-loop version of (1). Same handling: reject.
 //
 //   2. LOW TRUST METRICS from the engine:
-//        avg_logprob < -0.8 OR no_speech_prob > 0.35 OR compression_ratio > 2.0
-//      (Server drops worse; we drop merely-suspicious-for-an-insert.)
+//        avg_logprob < -0.80 OR no_speech_prob > 0.35 OR compression > 2.00
+//      (Server drops worse; we drop merely-suspicious for an insert.)
 //
-//   3. COMMON ENGLISH IDIOMS that happen to contain a book name:
+//   3. KNOWN WHISPER GHOST PHRASES (NEW in v5.1):
+//        "thanks for watching", "please subscribe", "bye bye", etc.
+//      Subsumes the old root-level HallucinationGuard's blacklist.
+//
+//   4. COMMON ENGLISH IDIOMS that happen to contain a book name:
 //        "john and mary went" -> spurious "John 1" shouldn't fire.
 //      We require a "scripture-intent" signal for borderline detections.
 //
@@ -30,6 +37,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 
 namespace WorshipHelperVSTO.Detection
 {
@@ -90,12 +98,45 @@ namespace WorshipHelperVSTO.Detection
         /// <summary>How many distinct chapters within that window counts as hallucination.</summary>
         public int RapidFireDistinctChaptersThreshold { get; set; } = 3;
 
+        /// <summary>How many distinct verses of the same chapter within the window
+        /// counts as the verse-loop hallucination (v5.1).</summary>
+        public int RapidFireDistinctVersesThreshold { get; set; } = 4;
+
+        // ------ Whisper ghost-phrase blacklist (v5.1, ported from old guard) ------
+        //
+        // These are phrases Whisper hallucinates when it has trained on YouTube /
+        // subtitled podcast data and the audio stream is actually silent or music.
+        // If the WHOLE transcript matches one of these, drop it — even if a
+        // book name happened to slip through the phonetic corrector.
+        private static readonly HashSet<string> _ghostPhrases =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "thanks for watching", "thank you for watching",
+            "thanks for watching!", "thank you.", "thank you",
+            "please subscribe", "subscribe to my channel",
+            "like and subscribe", "please like and subscribe",
+            "don't forget to subscribe", "hit that subscribe button",
+            "see you next time", "see you in the next video",
+            "bye", "bye.", "bye bye", "goodbye",
+            "you", "okay", "ok", "yeah",
+            "hmm", "hmm.", "um", "uh", "oh",
+            ".", "...", ". . .", "!", "?",
+            "music", "[music]", "(music)", "♪", "♪♪",
+            "silence", "[silence]", "[silent]",
+            "transcribed by", "transcription by",
+            "applause", "[applause]", "(applause)",
+            "laughter", "[laughter]", "(laughter)",
+            "amen", "god bless", "god bless you",
+            "hallelujah", "praise the lord",
+        };
+
         // ------ State ----------------------------------------------------
         private sealed class HistoryEntry
         {
             public DateTime Ts;
             public string Book;
             public int Chapter;
+            public int Verse;
         }
         private readonly LinkedList<HistoryEntry> _history = new LinkedList<HistoryEntry>();
         private readonly object _lock = new object();
@@ -105,9 +146,10 @@ namespace WorshipHelperVSTO.Detection
         private static readonly HashSet<string> _intentWords =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "turn", "read", "open", "go", "jump", "flip",
+            "turn", "turning", "read", "reading", "open", "go", "jump", "flip",
             "chapter", "verse", "verses", "scripture", "scriptures",
-            "passage", "book", "says", "through", "from",
+            "passage", "book", "says", "through", "from", "let's", "lets",
+            "hear", "hearing", "look", "word",
         };
 
         // Metrics for the debug panel.
@@ -121,6 +163,20 @@ namespace WorshipHelperVSTO.Detection
         public GuardDecision Check(GuardInput input)
         {
             TotalChecked++;
+            input = input ?? new GuardInput();
+
+            // 0. Whisper-ghost blacklist — apply even when no book detected,
+            //    because a ghost phrase like "Thanks for watching!" can still
+            //    leak downstream if we're not vigilant.
+            if (!string.IsNullOrWhiteSpace(input.RawText))
+            {
+                string normalised = NormaliseForBlacklist(input.RawText);
+                if (_ghostPhrases.Contains(normalised))
+                    return Rejected_($"ghostPhrase=\"{normalised}\"");
+                // Short echoes of ghost phrases e.g. "thank" alone:
+                if (normalised.Length <= 3 && !ContainsDigit(normalised))
+                    return Rejected_("tooShort");
+            }
 
             // Fast path: no book detected. Not our problem -- pipeline will drop.
             if (string.IsNullOrEmpty(input.Book) || input.Chapter <= 0)
@@ -139,24 +195,39 @@ namespace WorshipHelperVSTO.Detection
             if (input.DurationSeconds > 0 && input.DurationSeconds < MinDurationSeconds)
                 return Rejected_("tooShort=" + input.DurationSeconds.ToString("F2") + "s");
 
-            // 2. Rapid-fire hallucination pattern
-            //
-            //   If we've already seen N distinct chapters of the same book in
-            //   the last K seconds, this looks exactly like the "John 3/4/5/6"
-            //   loop. Reject.
+            // 2. Rapid-fire hallucination patterns
             PruneHistory();
             int distinctChapters;
+            int distinctVerses;
             lock (_lock)
             {
-                distinctChapters = _history
-                    .Where(h => h.Book.Equals(input.Book, StringComparison.OrdinalIgnoreCase))
-                    .Select(h => h.Chapter)
+                var sameBook = _history
+                    .Where(h => h.Book != null
+                             && h.Book.Equals(input.Book, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                distinctChapters = sameBook.Select(h => h.Chapter).Distinct().Count();
+                distinctVerses   = sameBook
+                    .Where(h => h.Chapter == input.Chapter && h.Verse > 0)
+                    .Select(h => h.Verse)
                     .Distinct()
                     .Count();
             }
+
+            //   2a. If we've already seen N distinct chapters of the same book in
+            //       the last K seconds, this looks exactly like the "John 3/4/5/6"
+            //       loop. Reject.
             if (distinctChapters >= RapidFireDistinctChaptersThreshold)
-                return Rejected_($"rapidFire: {distinctChapters} distinct chapters of {input.Book} " +
+                return Rejected_($"rapidFireChapters: {distinctChapters} chapters of {input.Book} " +
                                  $"in {RapidFireWindow.TotalSeconds:F0}s");
+
+            //   2b. Same-chapter verse loop ("Psalm 23:1 / 23:2 / 23:3 / 23:4"):
+            //       also a hallucination pattern that Whisper produces on
+            //       slightly-different-audio loops. Only reject when the
+            //       incoming item would be the 4th+ distinct verse.
+            if (input.Verse > 0 && distinctVerses >= RapidFireDistinctVersesThreshold)
+                return Rejected_($"rapidFireVerses: {distinctVerses} verses of {input.Book} " +
+                                 $"{input.Chapter} in {RapidFireWindow.TotalSeconds:F0}s");
 
             // 3. Chapter-only + no scripture intent + borderline confidence ->
             //    defer (so the grace window gives us time to see a confirming
@@ -198,9 +269,10 @@ namespace WorshipHelperVSTO.Detection
             {
                 _history.AddLast(new HistoryEntry
                 {
-                    Ts = DateTime.UtcNow,
-                    Book = input.Book,
+                    Ts      = DateTime.UtcNow,
+                    Book    = input.Book,
                     Chapter = input.Chapter,
+                    Verse   = input.Verse,
                 });
             }
         }
@@ -218,9 +290,23 @@ namespace WorshipHelperVSTO.Detection
         private static bool HasIntentSignal(string rawText)
         {
             if (string.IsNullOrWhiteSpace(rawText)) return false;
-            foreach (var tok in rawText.ToLowerInvariant().Split(new[] { ' ', ',', '.' },
+            foreach (var tok in rawText.ToLowerInvariant().Split(new[] { ' ', ',', '.', '?', '!' },
                                                                  StringSplitOptions.RemoveEmptyEntries))
                 if (_intentWords.Contains(tok)) return true;
+            return false;
+        }
+
+        private static string NormaliseForBlacklist(string text)
+        {
+            string t = text.ToLowerInvariant().Trim();
+            t = Regex.Replace(t, @"[^a-z0-9\s]", " ");
+            t = Regex.Replace(t, @"\s+", " ").Trim();
+            return t;
+        }
+
+        private static bool ContainsDigit(string s)
+        {
+            for (int i = 0; i < s.Length; i++) if (char.IsDigit(s[i])) return true;
             return false;
         }
     }

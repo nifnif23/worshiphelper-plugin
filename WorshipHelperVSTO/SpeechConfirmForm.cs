@@ -1,22 +1,20 @@
 // ============================================================================
-// SpeechConfirmForm.cs  —  REMADE (v2)
+// SpeechConfirmForm.cs  —  v5.1 (modernised)
 //
 // A premium-looking toast notification that appears when speech recognition
 // detects a Bible reference. Users can edit, accept (Enter / Insert button),
 // or dismiss (Esc / Dismiss button). Auto-dismisses after a timeout.
 //
-// What's new in v2:
-//   • Fully re-skinned: large rounded card, proper drop-shadow, cleaner
-//     typography, dedicated heading row with book-icon glyph.
-//   • Animated slide-in from the right, fade-out on dismiss.
-//   • Live countdown bar under the reference so presenters see exactly
-//     how much time they have before the toast disappears.
-//   • Modelessly shown so presenter view hotkeys still work.
-//   • UpdateReference() edits the same toast in place when a chapter-only
-//     reference is upgraded to chapter:verse.
-//   • ShowWithoutActivation so focus stays on the slideshow.
-//   • All timers are Windows Forms timers (UI thread) — thread-safe public
-//     API via Invoke/BeginInvoke.
+// What's new in v5.1:
+//   • Uses the new ModernButton + Palette from UI/ModernControls.cs so the
+//     Insert / Dismiss buttons are genuinely rounded (not just square with
+//     a flat border), with smooth hover + press states.
+//   • Soft 4-layer shadow behind the card for depth.
+//   • Countdown bar is a thin pill at the bottom, fully inside the card's
+//     rounded region — previously it touched the card border which looked
+//     amateur.
+//   • Nothing else in the public API has changed — TestRibbonItem keeps
+//     working exactly as before.
 // ============================================================================
 
 using System;
@@ -24,30 +22,32 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using WorshipHelperVSTO.UI;
 
 namespace WorshipHelperVSTO
 {
     public class SpeechConfirmForm : Form
     {
-        // ── Palette ─────────────────────────────────────────────────────────
-        private static readonly Color SurfaceTop     = Color.FromArgb(255, 255, 255);
-        private static readonly Color SurfaceBottom  = Color.FromArgb(248, 250, 248);
-        private static readonly Color AccentGreen    = Color.FromArgb(46, 125, 50);
-        private static readonly Color AccentGreenLt  = Color.FromArgb(76, 175, 80);
-        private static readonly Color DarkGreen      = Color.FromArgb(27, 94, 32);
-        private static readonly Color LightGreen     = Color.FromArgb(232, 245, 233);
-        private static readonly Color TextPrimary    = Color.FromArgb(33, 33, 33);
-        private static readonly Color TextMuted      = Color.FromArgb(117, 117, 117);
-        private static readonly Color BorderSoft     = Color.FromArgb(224, 228, 224);
+        // Local aliases for readability.
+        private static readonly Color SurfaceTop    = Palette.SurfaceTop;
+        private static readonly Color SurfaceBottom = Palette.SurfaceBottom;
+        private static readonly Color AccentGreen   = Palette.AccentGreen;
+        private static readonly Color AccentGreenLt = Palette.AccentGreenLt;
+        private static readonly Color DarkGreen     = Palette.DarkGreen;
+        private static readonly Color LightGreen    = Palette.LightGreen;
+        private static readonly Color TextPrimary   = Palette.TextDark;
+        private static readonly Color TextMuted     = Palette.TextMuted;
+        private static readonly Color BorderSoft    = Palette.BorderLight;
 
         // ── Controls ────────────────────────────────────────────────────────
-        private Label    _lblIcon;
-        private Label    _lblHeading;
-        private Label    _lblSubheading;
-        private TextBox  _txtReference;
-        private Label    _lblHint;
-        private Button   _btnInsert;
-        private Button   _btnDismiss;
+        private Label        _lblIcon;
+        private Label        _lblHeading;
+        private Label        _lblSubheading;
+        private TextBox      _txtReference;
+        private Panel        _txtReferenceWrap;
+        private Label        _lblHint;
+        private ModernButton _btnInsert;
+        private ModernButton _btnDismiss;
         private CountdownBar _countdown;
 
         // ── Timers / state ──────────────────────────────────────────────────
@@ -55,10 +55,10 @@ namespace WorshipHelperVSTO
         private Timer _countdownTicker;
         private Timer _fadeTimer;
 
-        private int   _autoCloseMs  = 12_000;      // 12s default
+        private int      _autoCloseMs  = 12_000;      // 12s default
         private DateTime _closeAtUtc;
-        private bool  _userHasEdited;
-        private bool  _closing;
+        private bool     _userHasEdited;
+        private bool     _closing;
 
         // Slide-in animation state
         private Point _targetLocation;
@@ -66,6 +66,9 @@ namespace WorshipHelperVSTO
         private Timer _slideInTimer;
         private int   _slideInStep;
         private const int SlideInSteps = 10;
+
+        // Shadow margin used when painting the card.
+        private const int ShadowMargin = 8;
 
         // ── Public API ──────────────────────────────────────────────────────
         public string Reference => _txtReference?.Text?.Trim() ?? string.Empty;
@@ -94,9 +97,10 @@ namespace WorshipHelperVSTO
             StartPosition   = FormStartPosition.Manual;
             TopMost         = true;
             ShowInTaskbar   = false;
-            BackColor       = SurfaceTop;
+            BackColor       = Color.Magenta;    // transparency key
+            TransparencyKey = Color.Magenta;    // lets the soft shadow look shadowy
             DoubleBuffered  = true;
-            Size            = new Size(400, 170);
+            Size            = new Size(420, 196);
             Padding         = new Padding(0);
 
             // Anchor bottom-right of primary screen
@@ -105,14 +109,11 @@ namespace WorshipHelperVSTO
             _offscreenLocation = new Point(screen.Right + 8,          _targetLocation.Y);
             Location           = _offscreenLocation;
 
-            // Rounded corners
-            ApplyRoundedRegion();
-            Resize += (s, e) => ApplyRoundedRegion();
-
-            // Custom paint: subtle gradient + left accent stripe + soft border
+            // Custom paint: shadow + rounded card + gradient + left accent stripe
             Paint += OnPaintCard;
 
-            // ── Left accent stripe is handled in OnPaintCard (no control) ──
+            // Inner card bounds (everything is positioned relative to these).
+            Rectangle card = CardBounds();
 
             // ── Icon badge ───────────────────────────────────────────────
             _lblIcon = new Label
@@ -124,7 +125,7 @@ namespace WorshipHelperVSTO
                 AutoSize  = false,
                 TextAlign = ContentAlignment.MiddleCenter,
                 Size      = new Size(44, 44),
-                Location  = new Point(14, 16),
+                Location  = new Point(card.X + 14, card.Y + 14),
             };
             Controls.Add(_lblIcon);
 
@@ -136,40 +137,56 @@ namespace WorshipHelperVSTO
                 ForeColor = DarkGreen,
                 BackColor = Color.Transparent,
                 AutoSize  = true,
-                Location  = new Point(64, 14)
+                Location  = new Point(card.X + 64, card.Y + 14),
             };
             Controls.Add(_lblHeading);
 
-            // ── Subheading / timestamp ───────────────────────────────────
+            // ── Subheading / instructions ────────────────────────────────
             _lblSubheading = new Label
             {
-                Text      = "Press Enter to insert, Esc to dismiss",
+                Text      = "Press Enter to insert  •  Esc to dismiss",
                 Font      = new Font("Segoe UI", 8.25f, FontStyle.Regular),
                 ForeColor = TextMuted,
                 BackColor = Color.Transparent,
                 AutoSize  = true,
-                Location  = new Point(64, 32)
+                Location  = new Point(card.X + 64, card.Y + 32),
             };
             Controls.Add(_lblSubheading);
 
-            // ── Reference textbox (big, bold, editable) ──────────────────
+            // ── Reference textbox wrapped in a rounded panel ─────────────
+            _txtReferenceWrap = new Panel
+            {
+                Location   = new Point(card.X + 16, card.Y + 62),
+                Size       = new Size(card.Width - 32, 38),
+                BackColor  = LightGreen,
+                Padding    = new Padding(12, 6, 12, 6),
+            };
+            _txtReferenceWrap.Paint += (s, e) =>
+            {
+                var g = e.Graphics;
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                var rr = new Rectangle(0, 0, _txtReferenceWrap.Width - 1, _txtReferenceWrap.Height - 1);
+                using (var path = Palette.RoundedPath(rr, 10))
+                using (var br   = new SolidBrush(LightGreen))
+                    g.FillPath(br, path);
+            };
+            Controls.Add(_txtReferenceWrap);
+
             _txtReference = new TextBox
             {
                 Text        = reference,
-                Font        = new Font("Segoe UI", 16f, FontStyle.Bold),
+                Font        = new Font("Segoe UI", 15f, FontStyle.Bold),
                 ForeColor   = TextPrimary,
                 BackColor   = LightGreen,
                 BorderStyle = BorderStyle.None,
-                Location    = new Point(16, 58),
-                Size        = new Size(Width - 32, 34),
+                Dock        = DockStyle.Fill,
                 TextAlign   = HorizontalAlignment.Left,
-                Anchor      = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top
             };
             _txtReference.KeyDown     += OnReferenceKeyDown;
             _txtReference.TextChanged += OnTextChangedFlagUserEdit;
-            Controls.Add(_txtReference);
+            _txtReferenceWrap.Controls.Add(_txtReference);
 
-            // Selection caret shim for the borderless textbox
+            // Caret to end on focus
             _txtReference.GotFocus += (s, e) =>
             {
                 try { _txtReference.SelectionStart = _txtReference.TextLength; }
@@ -179,9 +196,8 @@ namespace WorshipHelperVSTO
             // ── Countdown bar ────────────────────────────────────────────
             _countdown = new CountdownBar
             {
-                Location = new Point(16, 100),
-                Size     = new Size(Width - 32, 4),
-                Anchor   = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top,
+                Location = new Point(card.X + 16, card.Y + 108),
+                Size     = new Size(card.Width - 32, 4),
             };
             Controls.Add(_countdown);
 
@@ -193,89 +209,92 @@ namespace WorshipHelperVSTO
                 ForeColor = TextMuted,
                 BackColor = Color.Transparent,
                 AutoSize  = true,
-                Location  = new Point(16, 112)
+                Location  = new Point(card.X + 16, card.Y + 118),
             };
             Controls.Add(_lblHint);
 
-            // ── Dismiss button ───────────────────────────────────────────
-            _btnDismiss = new Button
+            // ── Modern rounded buttons ───────────────────────────────────
+            _btnDismiss = new ModernButton
             {
-                Text      = "Dismiss",
-                Font      = new Font("Segoe UI", 9f),
-                ForeColor = TextMuted,
-                BackColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Size      = new Size(80, 30),
-                Cursor    = Cursors.Hand,
-                TabStop   = false,
+                Text    = "Dismiss",
+                Primary = false,
+                Size    = new Size(88, 32),
+                TabStop = false,
             };
-            _btnDismiss.FlatAppearance.BorderColor = BorderSoft;
-            _btnDismiss.FlatAppearance.BorderSize  = 1;
-            _btnDismiss.FlatAppearance.MouseOverBackColor = Color.FromArgb(245, 245, 245);
             _btnDismiss.Click += (s, e) => Dismiss();
             Controls.Add(_btnDismiss);
 
-            // ── Insert button (primary) ──────────────────────────────────
-            _btnInsert = new Button
+            _btnInsert = new ModernButton
             {
-                Text      = "Insert  \u2192",
-                Font      = new Font("Segoe UI Semibold", 9f, FontStyle.Bold),
-                ForeColor = Color.White,
-                BackColor = AccentGreen,
-                FlatStyle = FlatStyle.Flat,
-                Size      = new Size(110, 30),
-                Cursor    = Cursors.Hand,
-                TabStop   = false,
-                UseVisualStyleBackColor = false,
+                Text    = "Insert  \u2192",
+                Primary = true,
+                Size    = new Size(116, 32),
+                TabStop = false,
             };
-            _btnInsert.FlatAppearance.BorderSize = 0;
-            _btnInsert.FlatAppearance.MouseOverBackColor = DarkGreen;
             _btnInsert.Click += (s, e) => Confirm();
             Controls.Add(_btnInsert);
 
-            // Layout buttons
             LayoutButtons();
-            Resize += (s, e) => LayoutButtons();
+        }
+
+        private Rectangle CardBounds()
+        {
+            // Leave room for the shadow on all sides.
+            return new Rectangle(ShadowMargin, ShadowMargin,
+                                 Width - ShadowMargin * 2,
+                                 Height - ShadowMargin * 2);
         }
 
         private void LayoutButtons()
         {
             if (_btnDismiss == null || _btnInsert == null) return;
-            int y = Height - _btnInsert.Height - 14;
-            _btnInsert.Location  = new Point(Width - _btnInsert.Width - 14, y);
+            Rectangle card = CardBounds();
+            int y = card.Bottom - _btnInsert.Height - 14;
+            _btnInsert.Location  = new Point(card.Right - _btnInsert.Width - 14, y);
             _btnDismiss.Location = new Point(_btnInsert.Left - _btnDismiss.Width - 8, y);
-        }
-
-        private void ApplyRoundedRegion()
-        {
-            try
-            {
-                var rgn = CreateRoundRectRgn(0, 0, Width + 1, Height + 1, 14, 14);
-                this.Region = Region.FromHrgn(rgn);
-                DeleteObject(rgn);
-            }
-            catch { /* non-fatal */ }
         }
 
         private void OnPaintCard(object sender, PaintEventArgs e)
         {
             var g = e.Graphics;
-            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.SmoothingMode   = SmoothingMode.AntiAlias;
+            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
 
-            // Subtle top→bottom gradient fill
-            var rect = new Rectangle(0, 0, Width, Height);
-            using (var br = new LinearGradientBrush(rect, SurfaceTop, SurfaceBottom, LinearGradientMode.Vertical))
-                g.FillRectangle(br, rect);
+            // Clear the form with the transparency key so we actually get
+            // rounded-with-shadow instead of showing square magenta edges.
+            g.Clear(TransparencyKey);
 
-            // Left accent stripe (4px)
-            using (var accent = new LinearGradientBrush(
-                new Rectangle(0, 0, 4, Height),
-                AccentGreenLt, AccentGreen, LinearGradientMode.Vertical))
-                g.FillRectangle(accent, 0, 0, 4, Height);
+            Rectangle card = CardBounds();
 
-            // Soft 1px border
-            using (var pen = new Pen(BorderSoft, 1))
-                g.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
+            // Soft drop shadow (4 expanding layers of low-alpha fills)
+            for (int i = 1; i <= 4; i++)
+            {
+                var sr = new Rectangle(card.X - i, card.Y + i, card.Width + i * 2, card.Height + i * 2);
+                using (var path = Palette.RoundedPath(sr, 16))
+                using (var br   = new SolidBrush(Color.FromArgb(14 - i * 2, 0, 0, 0)))
+                    g.FillPath(br, path);
+            }
+
+            // Card body with gradient
+            using (var path = Palette.RoundedPath(card, 14))
+            {
+                using (var br = new LinearGradientBrush(card, SurfaceTop, SurfaceBottom,
+                                                        LinearGradientMode.Vertical))
+                    g.FillPath(br, path);
+
+                // Left accent stripe, clipped to rounded path
+                var oldClip = g.Clip;
+                g.SetClip(path);
+                using (var accent = new LinearGradientBrush(
+                    new Rectangle(card.X, card.Y, 4, card.Height),
+                    AccentGreenLt, AccentGreen, LinearGradientMode.Vertical))
+                    g.FillRectangle(accent, card.X, card.Y, 4, card.Height);
+                g.Clip = oldClip;
+
+                // Soft 1px border
+                using (var pen = new Pen(BorderSoft, 1))
+                    g.DrawPath(pen, path);
+            }
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -321,9 +340,9 @@ namespace WorshipHelperVSTO
                     return;
                 }
                 // easeOutCubic
-                float t = (float)_slideInStep / SlideInSteps;
+                float t    = (float)_slideInStep / SlideInSteps;
                 float ease = 1f - (float)Math.Pow(1 - t, 3);
-                int dx = _targetLocation.X - _offscreenLocation.X;
+                int   dx   = _targetLocation.X - _offscreenLocation.X;
                 Location = new Point(_offscreenLocation.X + (int)(dx * ease), _targetLocation.Y);
             };
             _slideInTimer.Start();
@@ -401,13 +420,13 @@ namespace WorshipHelperVSTO
             if (e.KeyCode == Keys.Enter)
             {
                 e.SuppressKeyPress = true;
-                e.Handled = true;
+                e.Handled          = true;
                 Confirm();
             }
             else if (e.KeyCode == Keys.Escape)
             {
                 e.SuppressKeyPress = true;
-                e.Handled = true;
+                e.Handled          = true;
                 Dismiss();
             }
         }
@@ -467,7 +486,7 @@ namespace WorshipHelperVSTO
                 try
                 {
                     double remaining = (_closeAtUtc - DateTime.UtcNow).TotalMilliseconds;
-                    float progress = (float)Math.Max(0, Math.Min(1, remaining / _autoCloseMs));
+                    float  progress  = (float)Math.Max(0, Math.Min(1, remaining / _autoCloseMs));
                     _countdown.Progress = progress;
                 }
                 catch { /* ignore */ }
@@ -488,7 +507,7 @@ namespace WorshipHelperVSTO
         {
             try { _autoCloseTimer?.Stop();    _autoCloseTimer?.Dispose();    } catch { }
             try { _countdownTicker?.Stop();   _countdownTicker?.Dispose();   } catch { }
-            _autoCloseTimer = null;
+            _autoCloseTimer  = null;
             _countdownTicker = null;
         }
 
@@ -501,18 +520,7 @@ namespace WorshipHelperVSTO
         }
 
         // ─────────────────────────────────────────────────────────────────────
-        // Win32 interop for rounded region
-        // ─────────────────────────────────────────────────────────────────────
-        [DllImport("Gdi32.dll")]
-        private static extern IntPtr CreateRoundRectRgn(
-            int nLeftRect, int nTopRect, int nRightRect, int nBottomRect,
-            int nWidthEllipse, int nHeightEllipse);
-
-        [DllImport("Gdi32.dll")]
-        private static extern bool DeleteObject(IntPtr hObject);
-
-        // ─────────────────────────────────────────────────────────────────────
-        // CountdownBar — thin animated progress line under the reference
+        // CountdownBar — thin pill under the reference
         // ─────────────────────────────────────────────────────────────────────
         private sealed class CountdownBar : Control
         {
@@ -534,35 +542,42 @@ namespace WorshipHelperVSTO
                 SetStyle(ControlStyles.OptimizedDoubleBuffer |
                          ControlStyles.AllPaintingInWmPaint |
                          ControlStyles.UserPaint |
-                         ControlStyles.ResizeRedraw, true);
-                BackColor = Color.FromArgb(230, 236, 230);
+                         ControlStyles.ResizeRedraw |
+                         ControlStyles.SupportsTransparentBackColor, true);
+                BackColor = Color.Transparent;
             }
 
             protected override void OnPaint(PaintEventArgs e)
             {
                 var g = e.Graphics;
-                g.SmoothingMode = SmoothingMode.AntiAlias;
+                g.SmoothingMode   = SmoothingMode.AntiAlias;
+                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+
+                var r = new Rectangle(0, 0, Width, Height);
+                int radius = Math.Min(r.Height, 4);
 
                 // Track
-                using (var br = new SolidBrush(BackColor))
-                    g.FillRectangle(br, ClientRectangle);
+                using (var path = Palette.RoundedPath(r, radius))
+                using (var br   = new SolidBrush(Color.FromArgb(224, 232, 224)))
+                    g.FillPath(br, path);
 
-                // Fill
-                int fillW = (int)(Width * _progress);
+                int fillW = (int)(r.Width * _progress);
                 if (fillW <= 0) return;
 
-                // Colour transitions red near zero, green when plenty of time
+                // Fill — transitions green → amber → red as time runs out
                 Color c = _progress > 0.5f
                     ? AccentGreen
                     : (_progress > 0.25f ? Color.FromArgb(230, 180, 50)
                                          : Color.FromArgb(220, 80, 60));
 
-                using (var br = new LinearGradientBrush(
-                    new Rectangle(0, 0, Math.Max(1, fillW), Height),
-                    Color.FromArgb(200, c), c,
-                    LinearGradientMode.Horizontal))
-                    g.FillRectangle(br, 0, 0, fillW, Height);
+                var fillRect = new Rectangle(0, 0, fillW, Height);
+                using (var path = Palette.RoundedPath(fillRect, radius))
+                using (var br   = new LinearGradientBrush(
+                    fillRect, Color.FromArgb(210, c), c, LinearGradientMode.Horizontal))
+                    g.FillPath(br, path);
             }
         }
+
+        // (DllImports previously used for rounded region now live in Palette.)
     }
 }

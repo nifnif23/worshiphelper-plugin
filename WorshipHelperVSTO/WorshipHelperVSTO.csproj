@@ -92,10 +92,11 @@
     <Compile Include="Detection\PatternMatcher.cs" />
     <Compile Include="Detection\SemanticSearch.cs" />
     <Compile Include="Detection\VerseDatabase.cs" />
+    <Compile Include="Detection\HallucinationGuard.cs" />
     <Compile Include="Feedback\FeedbackStore.cs" />
     <Compile Include="Feedback\CorrectionEngine.cs" />
     <Compile Include="AddIn\Pipeline.cs" />
-    <Compile Include="HallucinationGuard.cs" />
+    <Compile Include="UI\ModernControls.cs" />
     <Compile Include="SpeechListener.cs" />
     <Compile Include="SpeechToScriptureService.cs" />
     <Compile Include="BibleReferenceDetector.cs" />

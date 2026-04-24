@@ -19,15 +19,11 @@ namespace WorshipHelperVSTO
         {
             // ---------------------------------------------------------------
             // Color scheme: Green / White / Gold
+            // (kept in sync with WorshipHelperVSTO.UI.Palette)
             // ---------------------------------------------------------------
             var accentGreen = System.Drawing.Color.FromArgb(46, 125, 50);
-            var darkGreen   = System.Drawing.Color.FromArgb(27, 94, 32);
-            var lightGreen  = System.Drawing.Color.FromArgb(232, 245, 233);
-            var hoverGreen  = System.Drawing.Color.FromArgb(200, 230, 201);
-            var gold        = System.Drawing.Color.FromArgb(184, 134, 11);
             var textDark    = System.Drawing.Color.FromArgb(33, 33, 33);
             var textMuted   = System.Drawing.Color.FromArgb(117, 117, 117);
-            var borderLight = System.Drawing.Color.FromArgb(200, 200, 200);
             var fieldBg     = System.Drawing.Color.White;
 
             // ---------------------------------------------------------------
@@ -45,10 +41,10 @@ namespace WorshipHelperVSTO
             this.txtBulk = new System.Windows.Forms.TextBox();
             this.lblBulkHint = new System.Windows.Forms.Label();
             this.chkMultiVerse = new System.Windows.Forms.CheckBox();
-            this.btnInsert = new System.Windows.Forms.Button();
-            this.btnCancel = new System.Windows.Forms.Button();
-            this.btnModeBulk = new System.Windows.Forms.Button();
-            this.btnModeSingle = new System.Windows.Forms.Button();
+            this.btnInsert = new WorshipHelperVSTO.UI.ModernButton();
+            this.btnCancel = new WorshipHelperVSTO.UI.ModernButton();
+            this.btnModeBulk = new WorshipHelperVSTO.UI.ModernButton();
+            this.btnModeSingle = new WorshipHelperVSTO.UI.ModernButton();
             this.lblStatus = new System.Windows.Forms.Label();
             this.panelHeader = new System.Windows.Forms.Panel();
             this.lblTitle = new System.Windows.Forms.Label();
@@ -233,36 +229,28 @@ namespace WorshipHelperVSTO
             row += rowH;
 
             // ---------------------------------------------------------------
-            // Row 6: Mode toggle buttons
+            // Row 6: Mode toggle buttons (modern rounded outline style)
             // ---------------------------------------------------------------
-            this.btnModeBulk.Font = new System.Drawing.Font("Segoe UI", 8F);
-            this.btnModeBulk.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
-            this.btnModeBulk.ForeColor = accentGreen;
-            this.btnModeBulk.FlatAppearance.BorderColor = accentGreen;
-            this.btnModeBulk.FlatAppearance.BorderSize = 1;
-            this.btnModeBulk.FlatAppearance.MouseOverBackColor = lightGreen;
+            this.btnModeBulk.Font = new System.Drawing.Font("Segoe UI", 8.5F, System.Drawing.FontStyle.Bold);
+            this.btnModeBulk.Primary = false;
+            this.btnModeBulk.AccentOverride = accentGreen;
+            this.btnModeBulk.CornerRadius = 8;
             this.btnModeBulk.Location = new System.Drawing.Point(leftCtrl, row);
             this.btnModeBulk.Name = "btnModeBulk";
-            this.btnModeBulk.Size = new System.Drawing.Size(155, 26);
+            this.btnModeBulk.Size = new System.Drawing.Size(170, 28);
             this.btnModeBulk.TabIndex = 6;
             this.btnModeBulk.Text = "\u2b07  Switch to Bulk Paste";
-            this.btnModeBulk.UseVisualStyleBackColor = true;
-            this.btnModeBulk.Cursor = System.Windows.Forms.Cursors.Hand;
             this.btnModeBulk.Click += new System.EventHandler(this.btnModeBulk_Click);
 
-            this.btnModeSingle.Font = new System.Drawing.Font("Segoe UI", 8F);
-            this.btnModeSingle.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
-            this.btnModeSingle.ForeColor = accentGreen;
-            this.btnModeSingle.FlatAppearance.BorderColor = accentGreen;
-            this.btnModeSingle.FlatAppearance.BorderSize = 1;
-            this.btnModeSingle.FlatAppearance.MouseOverBackColor = lightGreen;
+            this.btnModeSingle.Font = new System.Drawing.Font("Segoe UI", 8.5F, System.Drawing.FontStyle.Bold);
+            this.btnModeSingle.Primary = false;
+            this.btnModeSingle.AccentOverride = accentGreen;
+            this.btnModeSingle.CornerRadius = 8;
             this.btnModeSingle.Location = new System.Drawing.Point(leftCtrl, row);
             this.btnModeSingle.Name = "btnModeSingle";
-            this.btnModeSingle.Size = new System.Drawing.Size(155, 26);
+            this.btnModeSingle.Size = new System.Drawing.Size(170, 28);
             this.btnModeSingle.TabIndex = 7;
             this.btnModeSingle.Text = "\u2b06  Switch to Single Entry";
-            this.btnModeSingle.UseVisualStyleBackColor = true;
-            this.btnModeSingle.Cursor = System.Windows.Forms.Cursors.Hand;
             this.btnModeSingle.Visible = false;
             this.btnModeSingle.Click += new System.EventHandler(this.btnModeSingle_Click);
 
@@ -281,34 +269,29 @@ namespace WorshipHelperVSTO
             row += 22;
 
             // ---------------------------------------------------------------
-            // Row 8: Buttons
+            // Row 8: Buttons (modern rounded)
             // ---------------------------------------------------------------
-            this.btnInsert.Font = new System.Drawing.Font("Segoe UI Semibold", 9.5F, System.Drawing.FontStyle.Bold);
-            this.btnInsert.BackColor = accentGreen;
-            this.btnInsert.ForeColor = System.Drawing.Color.White;
-            this.btnInsert.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
-            this.btnInsert.FlatAppearance.BorderSize = 0;
-            this.btnInsert.FlatAppearance.MouseOverBackColor = darkGreen;
+            this.btnInsert.Font = new System.Drawing.Font("Segoe UI Semibold", 10F, System.Drawing.FontStyle.Bold);
+            this.btnInsert.Primary = true;
+            this.btnInsert.AccentOverride = accentGreen;
+            this.btnInsert.CornerRadius = 10;
             this.btnInsert.Location = new System.Drawing.Point(leftCtrl, row);
             this.btnInsert.Name = "btnInsert";
-            this.btnInsert.Size = new System.Drawing.Size(120, 34);
+            this.btnInsert.Size = new System.Drawing.Size(130, 36);
             this.btnInsert.TabIndex = 8;
             this.btnInsert.Text = "\u2714  Insert";
-            this.btnInsert.UseVisualStyleBackColor = false;
-            this.btnInsert.Cursor = System.Windows.Forms.Cursors.Hand;
             this.btnInsert.Click += new System.EventHandler(this.btnInsert_Click);
 
             this.btnCancel.DialogResult = System.Windows.Forms.DialogResult.Cancel;
-            this.btnCancel.Font = new System.Drawing.Font("Segoe UI", 9F);
-            this.btnCancel.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
-            this.btnCancel.FlatAppearance.BorderColor = borderLight;
-            this.btnCancel.ForeColor = textMuted;
-            this.btnCancel.Location = new System.Drawing.Point(leftCtrl + 130, row);
+            this.btnCancel.Font = new System.Drawing.Font("Segoe UI Semibold", 9.5F, System.Drawing.FontStyle.Bold);
+            this.btnCancel.Primary = false;
+            this.btnCancel.AccentOverride = System.Drawing.Color.FromArgb(117, 117, 117);
+            this.btnCancel.CornerRadius = 10;
+            this.btnCancel.Location = new System.Drawing.Point(leftCtrl + 140, row);
             this.btnCancel.Name = "btnCancel";
-            this.btnCancel.Size = new System.Drawing.Size(100, 34);
+            this.btnCancel.Size = new System.Drawing.Size(110, 36);
             this.btnCancel.TabIndex = 9;
             this.btnCancel.Text = "Close";
-            this.btnCancel.UseVisualStyleBackColor = true;
             this.btnCancel.Click += new System.EventHandler(this.btnCancel_Click);
 
             row += 50;
@@ -375,10 +358,10 @@ namespace WorshipHelperVSTO
         private System.Windows.Forms.TextBox txtBulk;
         private System.Windows.Forms.Label lblBulkHint;
         private System.Windows.Forms.CheckBox chkMultiVerse;
-        private System.Windows.Forms.Button btnInsert;
-        private System.Windows.Forms.Button btnCancel;
-        private System.Windows.Forms.Button btnModeBulk;
-        private System.Windows.Forms.Button btnModeSingle;
+        private WorshipHelperVSTO.UI.ModernButton btnInsert;
+        private WorshipHelperVSTO.UI.ModernButton btnCancel;
+        private WorshipHelperVSTO.UI.ModernButton btnModeBulk;
+        private WorshipHelperVSTO.UI.ModernButton btnModeSingle;
         private System.Windows.Forms.Label lblStatus;
     }
 }
