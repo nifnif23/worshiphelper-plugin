@@ -391,7 +391,7 @@ namespace WorshipHelperVSTO
                 // Catches impossible references and applies heuristics:
                 //   "Zech 5:49"  → "Zech 5:4-9"   (verse as range)
                 //   "Zech 49"    → "Zech 4:9"      (collapsed chapter:verse)
-                //   "Zech 40:1"  → "Zech 14:1"     (forty/fourteen swap)
+                //   "Zech 40:1"  �� "Zech 14:1"     (forty/fourteen swap)
                 //   "Ps 1:19"    → stays "Ps 1:19" (verse 19 exists in Ps 1)
                 //   "Ps 119:1"   → stays "Ps 119:1" (Ps 119 is a real chapter)
                 Bible validationBible = null;
@@ -635,7 +635,7 @@ namespace WorshipHelperVSTO
             if (toReleaseNow != null)
             {
                 log.Info($"Pipeline: Releasing previous pending \"{toReleaseNow.NormalisedReference}\" " +
-                          "(superseded by a different reference).");
+                         "(superseded by a different reference).");
                 FireDetection(toReleaseNow, releaseSpoken, releaseConf);
             }
         }
@@ -662,7 +662,7 @@ namespace WorshipHelperVSTO
                 if (!sameTarget) return;
 
                 log.Debug($"Pipeline: Pending \"{_pendingDetection.NormalisedReference}\" " +
-                          $"upgraded to \"{richer.NormalisedReference}\".");
+                         $"upgraded to \"{richer.NormalisedReference}\".");
 
                 _pendingDetection = null;
                 _pendingSpokenText = null;
@@ -789,7 +789,7 @@ namespace WorshipHelperVSTO
             }
 
             log.Info($"Pipeline: Upgraded pending \"{pending.NormalisedReference}\" → " +
-                      $"\"{upgraded.NormalisedReference}\" via follow-up \"{followUp.Text}\".");
+                     $"\"{upgraded.NormalisedReference}\" via follow-up \"{followUp.Text}\".");
 
             // Use the stronger of the two speech confidences.
             float fusedSpeechConf = Math.Max(pendingConfidence, followUp.Confidence);
