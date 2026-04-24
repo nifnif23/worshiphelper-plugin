@@ -96,8 +96,8 @@ namespace WorshipHelperVSTO
                     int vkCode = hookStruct.vkCode;
 
                     DocumentWindow presenterView = new WindowManager().GetPresenterView();
-                    bool presenting = presenterView != null &&
-                                      presenterView.Active == Microsoft.Office.Core.MsoTriState.msoTrue;
+                    var app2 = Globals.ThisAddIn.Application;
+                    bool presenting = app2.SlideShowWindows.Count > 0;
 
                     // FIX: The previous "formOpen" check blanket-suppressed ALL hotkeys whenever
                     // ANY WinForms form was open — which meant that once the speech listener

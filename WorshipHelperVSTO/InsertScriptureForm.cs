@@ -549,17 +549,8 @@ namespace WorshipHelperVSTO
                 verseNumbers,
                 chkMultiVerse.Checked);
 
-            // Navigate the active view to the newly-inserted slide so users
-            // immediately see the scripture that was just added.
-            try
-            {
-                if (firstSlide > 0)
-                    new SelectionManager().NavigateToInsertedSlide(firstSlide);
-            }
-            catch (Exception navEx)
-            {
-                log.Warn($"Could not navigate to inserted slide {firstSlide}: {navEx.Message}");
-            }
+            // Navigation after text insert is intentionally omitted —
+            // auto-advance only happens for speech-triggered inserts (Pipeline.cs).
         }
 
         private void InsertBulk()
@@ -642,18 +633,8 @@ namespace WorshipHelperVSTO
                     errors.Count == lines.Count ? MessageBoxIcon.Error : MessageBoxIcon.Warning);
             }
 
-            // After bulk insert, navigate to the first slide inserted for the
-            // LAST valid reference. (Navigating to each in turn would be
-            // disorienting during live presentation.)
-            try
-            {
-                if (lastInsertedSlideIndex > 0)
-                    new SelectionManager().NavigateToInsertedSlide(lastInsertedSlideIndex);
-            }
-            catch (Exception navEx)
-            {
-                log.Warn($"Could not navigate to bulk-inserted slide: {navEx.Message}");
-            }
+            // Navigation after bulk text insert is intentionally omitted —
+            // auto-advance only happens for speech-triggered inserts (Pipeline.cs).
         }
 
         /// <summary>
