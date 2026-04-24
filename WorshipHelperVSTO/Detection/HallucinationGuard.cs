@@ -58,15 +58,15 @@ namespace WorshipHelperVSTO.Detection
     /// </summary>
     public sealed class GuardInput
     {
-        public string RawText;              // what Whisper heard (post phonetic-correct)
-        public string Book;                 // detected book (may be null if no detection)
-        public int    Chapter;              // 0 if unknown
-        public int    Verse;                // 0 if chapter-only
-        public double EngineConfidence;     // 0..1
-        public double AvgLogProb;
-        public double CompressionRatio;
-        public double NoSpeechProb;
-        public double DurationSeconds;
+        public string RawText { get; set; }              // what Whisper heard (post phonetic-correct)
+        public string Book { get; set; }                 // detected book (may be null if no detection)
+        public int Chapter { get; set; }                 // 0 if unknown
+        public int Verse { get; set; }                   // 0 if chapter-only
+        public double EngineConfidence { get; set; }     // 0..1
+        public double AvgLogProb { get; set; }
+        public double CompressionRatio { get; set; }
+        public double NoSpeechProb { get; set; }
+        public double DurationSeconds { get; set; }
     }
 
     public sealed class HallucinationGuard
