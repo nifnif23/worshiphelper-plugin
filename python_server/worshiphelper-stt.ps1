@@ -1,61 +1,80 @@
 # ============================================================================
-# worshiphelper-stt.ps1
+# worshiphelper-stt.ps1  --  v7
 #
-# One-command launcher for the WorshipHelper speech stack. Starts:
-#   * STT WebSocket server on ws://127.0.0.1:8765/
-#   * Embed HTTP server on http://127.0.0.1:8766/
+# Launches the WorshipHelper speech stack:
+#   * STT WebSocket server  ws://127.0.0.1:8765/
+#   * Embed HTTP server     http://127.0.0.1:8766/
 #
-# Usage (from the python_server folder):
-#   .\worshiphelper-stt.ps1                  # auto-detect GPU/CPU, use small.en
-#   .\worshiphelper-stt.ps1 -Model small.en  # force a specific model
-#   .\worshiphelper-stt.ps1 -Device cpu      # force CPU even if GPU is available
-#   .\worshiphelper-stt.ps1 -NoEmbed         # skip the semantic-search embed server
+# RTX 3050 recommended launch (runs in CUDA float16, ~2 GB VRAM total):
+#   .\worshiphelper-stt.ps1
 #
-# Creates / uses the local .venv. First run downloads models (~500MB).
+# Larger GPU / workstation (4+ GB VRAM):
+#   .\worshiphelper-stt.ps1 -Model large-v3
+#
+# Force CPU (e.g. testing without GPU):
+#   .\worshiphelper-stt.ps1 -Device cpu -Model small.en
+#
+# Skip semantic search embed server:
+#   .\worshiphelper-stt.ps1 -NoEmbed
+#
+# First run: installs deps and downloads the model (~1.5 GB for distil-large-v3).
+# Subsequent runs: starts in ~10-15 seconds (model already cached).
 # ============================================================================
 param(
-    [string]$Model  = "small.en",
-    [string]$Device = "auto",
-    [string]$Compute = "auto",
+    # distil-large-v3: ~1.5 GB VRAM float16, near large-v3 accuracy, ~medium speed.
+    # Best default for RTX 3050 (4 GB). Change to large-v3 if you have 6+ GB VRAM.
+    [string]$Model   = "distil-large-v3",
+    [string]$Device  = "auto",
+    [string]$Compute = "float16",
     [switch]$NoEmbed,
-    [switch]$Preload
+    [string]$EmbedDevice = "auto"
 )
 
 $ErrorActionPreference = "Stop"
-
 Set-Location -Path $PSScriptRoot
 
-# -------------------------- venv ---------------------------------------------
+# ---- venv ------------------------------------------------------------------
 if (-not (Test-Path .venv\Scripts\Activate.ps1)) {
-    Write-Host "Creating .venv ..." -ForegroundColor Cyan
+    Write-Host "Creating virtual environment..." -ForegroundColor Cyan
     python -m venv .venv
 }
 . .\.venv\Scripts\Activate.ps1
 
-# -------------------------- deps ---------------------------------------------
-$freeze = pip freeze 2>$null
-if (-not ($freeze | Select-String -Quiet "^faster-whisper==")) {
-    Write-Host "Installing dependencies (this can take a few minutes) ..." -ForegroundColor Cyan
-    pip install --upgrade pip | Out-Null
-    pip install -r requirements.txt
+# ---- CUDA torch (must come before requirements.txt) ------------------------
+$torchVersion = pip show torch 2>$null | Select-String "^Version"
+$hasCuda = python -c "import torch; print(torch.cuda.is_available())" 2>$null
+if ($hasCuda -ne "True" -and $Device -ne "cpu") {
+    Write-Host "Installing CUDA-enabled PyTorch (this may take a few minutes)..." -ForegroundColor Cyan
+    pip install torch --index-url https://download.pytorch.org/whl/cu118 --quiet
 }
 
-# -------------------------- start --------------------------------------------
-Write-Host ""
-Write-Host "Starting WorshipHelper STT server..." -ForegroundColor Green
-Write-Host "  model  = $Model"
-Write-Host "  device = $Device"
-Write-Host "  compute= $Compute"
-Write-Host ""
+# ---- deps ------------------------------------------------------------------
+$installed = pip show faster-whisper 2>$null
+if (-not $installed) {
+    Write-Host "Installing Python dependencies..." -ForegroundColor Cyan
+    pip install --upgrade pip --quiet
+    pip install -r requirements.txt --quiet
+}
 
+# ---- start embed server ----------------------------------------------------
 if (-not $NoEmbed) {
-    $embedArgs = @()
-    if ($Preload) { $embedArgs += "--preload" }
+    Write-Host "Starting embed server (BAAI/bge-base-en-v1.5)..." -ForegroundColor DarkGray
     Start-Process -FilePath python `
-        -ArgumentList (@("embed_server.py") + $embedArgs) `
+        -ArgumentList "embed_server.py", "--device", $EmbedDevice `
         -WindowStyle Minimized `
         -WorkingDirectory $PSScriptRoot | Out-Null
-    Write-Host "Embed server starting (background) on http://127.0.0.1:8766/" -ForegroundColor DarkGray
+    Write-Host "  http://127.0.0.1:8766/  (preloading model in background)" -ForegroundColor DarkGray
 }
 
+# ---- banner ----------------------------------------------------------------
+Write-Host ""
+Write-Host "WorshipHelper STT server v7" -ForegroundColor Green
+Write-Host "  model   = $Model"
+Write-Host "  device  = $Device"
+Write-Host "  compute = $Compute"
+Write-Host ""
+Write-Host "First launch downloads the model (~1.5 GB). Subsequent starts are fast." -ForegroundColor DarkGray
+Write-Host ""
+
+# ---- start STT server (foreground — keep window open) ----------------------
 python server.py --model $Model --device $Device --compute $Compute
