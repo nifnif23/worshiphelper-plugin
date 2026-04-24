@@ -13,7 +13,7 @@ using System;
 using System.Collections.Generic;
 using System.Timers;
 using log4net;
-using WorshipHelperVSTO.Detection;   // v5: HallucinationGuard
+using WorshipHelperVSTO.Detection;   // v5: HallucinationGuard, GuardInput, GuardVerdict, GuardDecision
 
 namespace WorshipHelperVSTO
 {
