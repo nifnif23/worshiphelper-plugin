@@ -124,7 +124,7 @@ namespace WorshipHelperVSTO
         // -----------------------------------------------------------------------
         private readonly object _pendingLock = new object();
         private DetectedReference _pendingDetection; // chapter-only, awaiting possible verse
-        private float _pendingSpeechConfidence;
+        private double _pendingSpeechConfidence;
         private string _pendingSpokenText;
         private int _pendingChapterNumber;           // parsed chapter of the pending reference
         private System.Threading.Timer _pendingTimer;
@@ -391,7 +391,7 @@ namespace WorshipHelperVSTO
                 // Catches impossible references and applies heuristics:
                 //   "Zech 5:49"  → "Zech 5:4-9"   (verse as range)
                 //   "Zech 49"    → "Zech 4:9"      (collapsed chapter:verse)
-                //   "Zech 40:1"  �� "Zech 14:1"     (forty/fourteen swap)
+                //   "Zech 40:1"  → "Zech 14:1"     (forty/fourteen swap)
                 //   "Ps 1:19"    → stays "Ps 1:19" (verse 19 exists in Ps 1)
                 //   "Ps 119:1"   → stays "Ps 119:1" (Ps 119 is a real chapter)
                 Bible validationBible = null;
@@ -488,7 +488,7 @@ namespace WorshipHelperVSTO
         /// toast never pops for a borderline detection that we'd ultimately
         /// have thrown away.
         /// </summary>
-        private void RaisePreliminary(DetectedReference detected, string spokenText, float speechConfidence)
+        private void RaisePreliminary(DetectedReference detected, string spokenText, double speechConfidence)
         {
             if (detected == null) return;
             try
@@ -516,7 +516,7 @@ namespace WorshipHelperVSTO
         /// suppression and confidence threshold checks. Shared by the
         /// immediate-fire path and the pending-release path.
         /// </summary>
-        private void FireDetection(DetectedReference detected, string spokenText, float speechConfidence)
+        private void FireDetection(DetectedReference detected, string spokenText, double speechConfidence)
         {
             if (detected == null) return;
 
@@ -587,11 +587,11 @@ namespace WorshipHelperVSTO
         /// book/chapter, that one is released immediately — the minister
         /// has clearly moved on to a new reference.
         /// </summary>
-        private void StashPendingChapterOnly(DetectedReference detected, string spokenText, float speechConfidence)
+        private void StashPendingChapterOnly(DetectedReference detected, string spokenText, double speechConfidence)
         {
             DetectedReference toReleaseNow = null;
             string            releaseSpoken = null;
-            float             releaseConf   = 0f;
+            double            releaseConf   = 0.0;
 
             int incomingChapter = ParseChapterNumber(detected.ReferenceFragment);
 
@@ -666,7 +666,7 @@ namespace WorshipHelperVSTO
 
                 _pendingDetection = null;
                 _pendingSpokenText = null;
-                _pendingSpeechConfidence = 0f;
+                _pendingSpeechConfidence = 0.0;
                 _pendingChapterNumber = 0;
                 _pendingTimer?.Dispose();
                 _pendingTimer = null;
@@ -682,7 +682,7 @@ namespace WorshipHelperVSTO
         {
             DetectedReference detected;
             string spokenText;
-            float  speechConfidence;
+            double speechConfidence;
 
             lock (_pendingLock)
             {
@@ -694,7 +694,7 @@ namespace WorshipHelperVSTO
 
                 _pendingDetection = null;
                 _pendingSpokenText = null;
-                _pendingSpeechConfidence = 0f;
+                _pendingSpeechConfidence = 0.0;
                 _pendingChapterNumber = 0;
                 _pendingTimer?.Dispose();
                 _pendingTimer = null;
@@ -721,7 +721,7 @@ namespace WorshipHelperVSTO
         {
             DetectedReference pending;
             string            pendingSpoken;
-            float             pendingConfidence;
+            double            pendingConfidence;
             int               pendingChapter;
 
             lock (_pendingLock)
@@ -752,7 +752,7 @@ namespace WorshipHelperVSTO
             {
                 _pendingDetection = null;
                 _pendingSpokenText = null;
-                _pendingSpeechConfidence = 0f;
+                _pendingSpeechConfidence = 0.0;
                 _pendingChapterNumber = 0;
                 _pendingTimer?.Dispose();
                 _pendingTimer = null;
@@ -792,7 +792,7 @@ namespace WorshipHelperVSTO
                      $"\"{upgraded.NormalisedReference}\" via follow-up \"{followUp.Text}\".");
 
             // Use the stronger of the two speech confidences.
-            float fusedSpeechConf = Math.Max(pendingConfidence, followUp.Confidence);
+            double fusedSpeechConf = Math.Max(pendingConfidence, followUp.Confidence);
             string fusedSpoken = $"{pendingSpoken} {followUp.Text}".Trim();
 
             FireDetection(upgraded, fusedSpoken, fusedSpeechConf);
@@ -811,7 +811,7 @@ namespace WorshipHelperVSTO
                 log.Debug($"Pipeline: Discarding pending \"{_pendingDetection.NormalisedReference}\" (cancelled).");
                 _pendingDetection = null;
                 _pendingSpokenText = null;
-                _pendingSpeechConfidence = 0f;
+                _pendingSpeechConfidence = 0.0;
                 _pendingChapterNumber = 0;
                 _pendingTimer?.Dispose();
                 _pendingTimer = null;
